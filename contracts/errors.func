@@ -1,0 +1,9 @@
+const int error::unauthorized_new_order = 100;
+const int error::not_enough_ton = 100;
+const int error::unauthorized_execute = 100;
+const int error::singers_outdated = 100;
+const int error::unauthorized_init = 100;
+const int error::already_inited = 100;
+const int error::unauthorized_sign = 100;
+const int error::already_approved = 100;
+

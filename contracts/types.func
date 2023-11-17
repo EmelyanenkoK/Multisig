@@ -1,0 +1,54 @@
+;; general
+(slice, (int)) ~load_timestamp(slice s) inline { return s.load_uint(48); }
+builder store_timestamp(builder b, int timestamp) inline { return b.store_uint(timestamp, 48); }
+
+(slice, (int)) ~load_bool(slice s) inline { return s.load_int(1); }
+builder store_bool(builder b, int flag) inline { return b.store_int(flag, 1); }
+
+
+(slice, (int)) ~load_hash(slice s) inline { return s.load_uint(256); }
+builder store_hash(builder b, int hash) inline { return b.store_uint(hash, 256); }
+
+
+(slice, (int)) ~load_workchain(slice s) inline { return s.load_int(8); }
+builder store_workchain(builder b, int wc) inline { return b.store_int(wc, 8); }
+const int MASTERCHAIN = -1;
+const int BASECHAIN = 0;
+
+;; Op-codes
+
+(slice, (int)) ~load_op(slice s) inline { return s.load_uint(32); }
+(slice, (int)) ~load_query_id(slice s) inline { return s.load_uint(64); }
+(slice, (int, int)) ~load_body_header(slice s) inline {
+    int op = s~load_uint(32);
+    int query_id = s~load_uint(64);
+    return (s, (op, query_id));
+}
+
+
+(slice, ()) ~skip_bounce(slice s) inline { s~skip_bits(32); return (s, ());}
+
+builder store_op(builder b, int op) inline { return b.store_uint(op, 32); }
+builder store_query_id(builder b, int query_id) inline { return b.store_uint(query_id, 64); }
+builder store_body_header(builder b, int op, int query_id) inline {
+    return b.store_uint(op, 32)
+            .store_uint(query_id, 64);
+}
+
+;; Multisig types
+
+{- By index we mean index of signer in signers dictionary. The same type is used
+   for threshold, singers number and for proposers indexes -}
+
+const int INDEX_SIZE = 8;
+(slice, (int)) ~load_index(slice s) inline { return s.load_uint(INDEX_SIZE); }
+builder store_index(builder b, int index) inline { return b.store_uint(index, INDEX_SIZE); }
+
+const int ACTION_INDEX_SIZE = INDEX_SIZE;
+
+
+
+const int ORDER_SEQNO_SIZE = 32;
+(slice, (int)) ~load_order_seqno(slice s) inline { return s.load_uint(ORDER_SEQNO_SIZE); }
+builder store_order_seqno(builder b, int seqno) inline { return b.store_uint(seqno, ORDER_SEQNO_SIZE); }
+

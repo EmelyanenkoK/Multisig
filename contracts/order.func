@@ -1,0 +1,120 @@
+#include "imports/stdlib.fc";
+#include "types.func";
+#include "op-codes.func";
+#include "messages.func";
+#include "errors.func";
+
+((int, int), ()) ~add_approval((int, int) approve_data, int signer_index) impure {
+    (int approvals, int approvals_num) = approve_data;
+    int mask = 1 << signer_index;
+    throw_if(error::already_approved, approvals & mask);
+    approvals_num += 1;
+    approvals |= mask;
+    return ((approvals, approvals_num), ());
+}
+
+(slice, int, int, int, cell, int, int, int, int, cell) load_data() {
+    slice ds = get_data().begin_parse();
+    (slice multisig, int order_seqno) = (ds~load_msg_addr(), ds~load_order_seqno());
+    ifnot (ds.slice_bits()) {
+      return (multisig, order_seqno, null(), null(), null(), null(), null(), null(), null(), null());
+    }
+    (int threshold,
+     int executed?, cell signers, int signers_num, 
+     int approvals, int approvals_num, int expiration_date,
+     cell order) =               (ds~load_index(),
+                                  ds~load_bool(), ds~load_dict(), ds~load_index(),
+                                  ds~load_uint(1 << INDEX_SIZE), ds~load_index(), ds~load_timestamp(),
+                                  ds~load_ref());
+     return (multisig, order_seqno, threshold,
+             executed?, signers, signers_num, 
+             approvals, approvals_num, expiration_date,
+             order);
+}
+
+() save_data (slice multisig, int order_seqno, int threshold,
+              int executed?, cell signers, int signers_num, 
+              int approvals, int approvals_num, int expiration_date,
+              cell order) impure {
+    begin_cell().store_slice(multisig).store_order_seqno(order_seqno).store_index(threshold)
+                .store_bool(executed?).store_dict(signers).store_index(signers_num)
+                .store_uint(approvals, 1 << INDEX_SIZE)
+                .store_index(approvals_num).store_timestamp(expiration_date)
+                .store_ref(order)
+    .end_cell()
+    .set_data();
+}
+
+() recv_internal(int balance, int msg_value, cell in_msg_full, slice in_msg_body) {
+    slice cs = in_msg_full.begin_parse();
+    int flags = cs~load_uint(4);
+    slice sender = cs~load_msg_addr();
+
+    (int op, int query_id) = in_msg_body~load_body_header();
+    
+    (slice multisig, int order_seqno, int threshold,
+     int executed?, cell signers, int signers_num, 
+     int approvals, int approvals_num, int expiration_date,
+     cell order) = load_data();
+    
+    if(op == op::init) {
+        throw_unless(error::unauthorized_init, equal_slice_bits(sender, multisig));
+        throw_unless(error::already_inited, null?(threshold));
+        ;; Let's init
+        threshold = in_msg_body~load_index();
+        executed? = false;
+        signers = in_msg_body~load_ref();
+        signers_num = in_msg_body~load_index();
+        approvals = 0;
+        approvals_num = 0;
+        expiration_date = in_msg_body~load_timestamp();
+        order = in_msg_body~load_ref();
+        int approve_on_init? = in_msg_body~load_bool();
+        if (approve_on_init?) {
+           int signer_index = in_msg_body~load_index();
+           (approvals, approvals_num)~add_approval(signer_index);
+        }
+        ;; TODO: do we need to send confirmation? multisig should send it back in this case
+        ;;send(multisig, op::inited, query_id, begin_cell().store_slice(order_creator), NOTIFY_AMOUNT, sendmode::REGULAR);
+    } elseif(expiration_date < now()) {
+        send_msg_builder(sender, 0, 
+                         begin_cell().store_body_header(op::expired, query_id),
+                         msgflag::NON_BOUNCEABLE,
+                         sendmode::CARRY_ALL_REMAINING_MESSAGE_VALUE);
+        send_msg_builder(multisig, 0, 
+                         begin_cell().store_body_header(op::expired, query_id),
+                         msgflag::NON_BOUNCEABLE,
+                         sendmode::IGNORE_ERRORS | sendmode::CARRY_ALL_BALANCE);
+    } elseif (executed?) {
+        send_msg_builder(sender, 0, 
+                         begin_cell().store_body_header(op::already_executed, query_id),
+                         msgflag::NON_BOUNCEABLE,
+                         sendmode::CARRY_ALL_REMAINING_MESSAGE_VALUE);
+    }
+    if(op == op::approve) {
+        int signer_index = in_msg_body~load_index();
+        (slice signer, int found?) = signers.udict_get?(INDEX_SIZE, signer_index);
+        throw_unless(error::unauthorized_sign, found? & equal_slice_bits(sender, signer));
+        
+        (approvals, approvals_num)~add_approval(signer_index);
+        send_msg_builder(sender, 0, 
+                         begin_cell().store_body_header(op::approved, query_id),
+                         msgflag::NON_BOUNCEABLE,
+                         sendmode::CARRY_ALL_REMAINING_MESSAGE_VALUE);
+
+        if( approvals_num == threshold) {
+            send_msg_builder(sender, 0, 
+                             begin_cell().store_body_header(op::execute, query_id)
+                                         .store_order_seqno(order_seqno)
+                                         .store_hash(signers.cell_hash())
+                                         .store_ref(order),
+                             msgflag::BOUNCEABLE,
+                             sendmode::CARRY_ALL_BALANCE);
+            executed? = true;
+        }
+    }
+    save_data(multisig, order_seqno, threshold,
+              executed?, signers, signers_num, 
+              approvals, approvals_num, expiration_date,
+              order);
+}
