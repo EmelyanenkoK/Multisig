@@ -58,7 +58,7 @@ export class MultiownerWallet implements Contract {
         await provider.internal(via, {
             value,
             sendMode: SendMode.PAY_GAS_SEPARATELY,
-            body: beginCell().endCell(),
+            body: beginCell().storeUint(0, 32).storeUint(0, 64).endCell(),
         });
     }
 
