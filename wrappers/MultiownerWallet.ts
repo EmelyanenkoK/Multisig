@@ -65,20 +65,25 @@ export class MultiownerWallet implements Contract {
     async sendNewOrder(provider: ContractProvider, via: Sender,
            transfers: Array<{sendMode:SendMode, message:MessageRelaxed}>,
            expirationDate: number, value: bigint = 200000000n) {
+
+        const addrCmp = (x: Address) => x.equals(via.address!);
         let body = beginCell().storeUint(Op.multiowner.new_order, 32)
                               .storeUint(1, 64);
         if(this.configuration === undefined) {
             throw new Error("Configuration is not set: use createFromConfig or loadConfiguration");
         }
         // check that via.address is in signers
-        if(this.configuration!.signers.includes(via.address!)) {
+        let addrIdx = this.configuration.signers.findIndex(addrCmp);
+        if(addrIdx >= 0) {
            body = body.storeBit(true);
-           body = body.storeUint(this.configuration!.signers.findIndex(via.address!), 8);
-        } else if (this.configuration!.proposers.includes(via.address)) {
-           body = body.storeBit(false);
-           body = body.storeUint(this.configuration!.proposers.findIndex(via.address!), 8);
+           body = body.storeUint(addrIdx, 8);
         } else {
-           throw new Error("Sender is not a signer or proposer");
+           addrIdx = this.configuration.proposers.findIndex(addrCmp);
+           if (addrIdx < 0) {
+            throw new Error("Sender is not a signer or proposer");
+           }
+           body = body.storeBit(false);
+           body = body.storeUint(addrIdx, 8);
         }
         body = body.storeUint(expirationDate, 48);
         // pack transfers to the order_body cell
