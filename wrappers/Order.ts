@@ -45,20 +45,27 @@ export class Order implements Contract {
                      order: Cell,
                      threshold: number = 1,
                      approve_on_init: boolean = false,
+                     signer_idx: number = 0,
                      query_id : number | bigint = 0) {
+       const msgBody = beginCell()
+                        .storeUint(Op.order.init, 32)
+                        .storeUint(query_id, 64)
+                        .storeUint(threshold, 8)
+                        .storeRef(beginCell().storeDictDirect(arrayToCell(signers)).endCell())
+                        .storeUint(signers.length, 8)
+                        .storeUint(expiration_date, 48)
+                        .storeRef(order)
+                        .storeBit(approve_on_init);
+
+       if(approve_on_init) {
+           msgBody.storeUint(signer_idx, 8)
+       }
+
+
        await provider.internal(via, {
            value,
            sendMode: SendMode.PAY_GAS_SEPARATELY,
-           body: beginCell()
-                    .storeUint(Op.order.init, 32)
-                    .storeUint(query_id, 64)
-                    .storeUint(threshold, 8)
-                    .storeRef(beginCell().storeDictDirect(arrayToCell(signers)).endCell())
-                    .storeUint(signers.length, 8)
-                    .storeUint(expiration_date, 48)
-                    .storeRef(order)
-                    .storeBit(approve_on_init)
-                .endCell()
+           body: msgBody.endCell()
        });
     }
 
