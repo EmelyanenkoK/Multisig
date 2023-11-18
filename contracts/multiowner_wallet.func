@@ -21,7 +21,7 @@ cell order_body) impure {
 
     int action_index = -1;
     do {
-        (action_index, slice action, int found?) = order_body.idict_get_next?(ACTION_INDEX_SIZE, action_index);
+        (action_index, slice action, int found?) = order_body.udict_get_next?(ACTION_INDEX_SIZE, action_index);
         if (found?) {
             int action_op = action~load_op();
             if(action_op == actions::send_message) {

@@ -1,13 +1,48 @@
-import { Address, beginCell, Cell, Contract, contractAddress, ContractProvider, Sender, SendMode } from 'ton-core';
+import { Address, beginCell,  Cell, Builder, Dictionary, MessageRelaxed, storeMessageRelaxed, Contract, contractAddress, ContractProvider, Sender, SendMode } from 'ton-core';
+import { Op } from "../Constants";
 
-export type MultiownerWalletConfig = {};
+export type MultiownerWalletConfig = {
+    threshold: number;
+    signers: Array<Address>;
+    proposers: Array<Address>;
+    modules: Array<Address>;
+    guard: Cell | null;
+};
 
+function arrayToCell(arr: Array<Address>): Dictionary<number, Address> {
+    let dict = Dictionary.empty(Dictionary.Keys.Int(8), Dictionary.Values.Address());
+    for (let i = 0; i < arr.length; i++) {
+        dict = dict.set(i, arr[i]);
+    }
+    return dict;
+}
+/*
+    (int next_order_seqno, int threshold,
+        cell signers, int signers_num,
+        cell proposers,
+        cell modules, cell guard) = (ds~load_order_seqno(), ds~load_index(),
+        ds~load_dict(), ds~load_index(),
+        ds~load_dict(),
+        ds~load_dict(), ds~load_maybe_ref());
+*/
 export function multiownerWalletConfigToCell(config: MultiownerWalletConfig): Cell {
-    return beginCell().endCell();
+    return beginCell()
+                .storeUint(0, 32)
+                .storeUint(config.threshold, 8)
+                .storeDict(arrayToCell(config.signers))
+                .storeUint(config.signers.length, 8)
+                .storeDict(arrayToCell(config.proposers))
+                .storeDict(arrayToCell(config.modules))
+                .storeMaybeRef(config.guard)
+           .endCell();
 }
 
 export class MultiownerWallet implements Contract {
-    constructor(readonly address: Address, readonly init?: { code: Cell; data: Cell }) {}
+    configuration: MultiownerWalletConfig | undefined;
+
+    constructor(readonly address: Address,
+                readonly init?: { code: Cell; data: Cell },
+                configuration?: MultiownerWalletConfig) {}
 
     static createFromAddress(address: Address) {
         return new MultiownerWallet(address);
@@ -16,7 +51,7 @@ export class MultiownerWallet implements Contract {
     static createFromConfig(config: MultiownerWalletConfig, code: Cell, workchain = 0) {
         const data = multiownerWalletConfigToCell(config);
         const init = { code, data };
-        return new MultiownerWallet(contractAddress(workchain, init), init);
+        return new MultiownerWallet(contractAddress(workchain, init), init, config);
     }
 
     async sendDeploy(provider: ContractProvider, via: Sender, value: bigint) {
@@ -24,6 +59,46 @@ export class MultiownerWallet implements Contract {
             value,
             sendMode: SendMode.PAY_GAS_SEPARATELY,
             body: beginCell().endCell(),
+        });
+    }
+
+    async sendNewOrder(provider: ContractProvider, via: Sender,
+           transfers: Array<{sendMode:SendMode, message:MessageRelaxed}>,
+           expirationDate: number, value: bigint = 200000000n) {
+        let body = beginCell().storeUint(Op.multiowner.new_order, 32)
+                              .storeUint(1, 64);
+        if(this.configuration === undefined) {
+            throw new Error("Configuration is not set: use createFromConfig or loadConfiguration");
+        }
+        // check that via.address is in signers
+        if(this.configuration!.signers.includes(via.address!)) {
+           body = body.storeBit(true);
+           body = body.storeUint(this.configuration!.signers.findIndex(via.address!), 8);
+        } else if (this.configuration!.proposers.includes(via.address)) {
+           body = body.storeBit(false);
+           body = body.storeUint(this.configuration!.proposers.findIndex(via.address!), 8);
+        } else {
+           throw new Error("Sender is not a signer or proposer");
+        }
+        body = body.storeUint(expirationDate, 48);
+        // pack transfers to the order_body cell
+        let order_dict = Dictionary.empty(Dictionary.Keys.Int(8), Dictionary.Values.Cell());
+        if(transfers.length > 254) {
+              throw new Error("Too many transfers, only 254 allowed");
+        }
+        for (let i = 0; i < transfers.length; i++) {
+            let transfer = beginCell().storeUint(Op.actions.send_message, 32)
+                                     .storeUint(transfers[i].sendMode, 8)
+                                     .store(storeMessageRelaxed(transfers[i].message))
+                           .endCell();
+            order_dict = order_dict.set(i, transfer);
+        }
+        body = body.storeDictDirect(order_dict);
+
+        await provider.internal(via, {
+            sendMode: SendMode.PAY_GAS_SEPARATELY,
+            value,
+            body: body.endCell()
         });
     }
 }

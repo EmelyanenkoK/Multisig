@@ -16,10 +16,17 @@ describe('MultiownerWallet', () => {
 
     beforeEach(async () => {
         blockchain = await Blockchain.create();
-
-        multiownerWallet = blockchain.openContract(MultiownerWallet.createFromConfig({}, code));
-
         const deployer = await blockchain.treasury('deployer');
+
+        let config = {
+            threshold: 1,
+            signers: [deployer.address],
+            proposers: [],
+            modules: [],
+            guard: null,
+        };
+
+        multiownerWallet = blockchain.openContract(MultiownerWallet.createFromConfig(config, code));
 
         const deployResult = await multiownerWallet.sendDeploy(deployer.getSender(), toNano('0.05'));
 
