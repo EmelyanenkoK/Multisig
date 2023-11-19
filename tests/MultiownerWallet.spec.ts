@@ -46,7 +46,9 @@ describe('MultiownerWallet', () => {
     });
     it('should send new order', async () => {
         const testAddr = randomAddress();
-        const testMsg: TransferRequest = {sendMode: 0, message: internal({to: testAddr, value: toNano('0.015'), body: beginCell().storeUint(12345, 32).endCell()})};
+        const testMsg: TransferRequest = {sendMode: 1, message: internal({to: testAddr, value: toNano('0.015'), body: beginCell().storeUint(12345, 32).endCell()})};
+        let initialSeqno = (await multiownerWallet.getMultiownerData()).nextOrderSeqno;
+        await blockchain.setVerbosityForAddress(multiownerWallet.address, {blockchainLogs:true, vmLogs: 'vm_logs'});
         const res = await multiownerWallet.sendNewOrder(deployer.getSender(), [testMsg], Math.floor(Date.now() / 1000 + 1000));
 
         expect(res.transactions).toHaveTransaction({
@@ -55,8 +57,56 @@ describe('MultiownerWallet', () => {
             success: true,
             outMessagesCount: 1
         });
-        console.log(prettyLogTransactions(res.transactions));
-        expect((await multiownerWallet.getMultiownerData()).nextOrderSeqno).toEqual(1);
+        expect((await multiownerWallet.getMultiownerData()).nextOrderSeqno).toEqual(initialSeqno + 1n);
+        let orderAddress = await multiownerWallet.getOrderAddress(initialSeqno);
+        expect(res.transactions).toHaveTransaction({
+            from: multiownerWallet.address,
+            to: orderAddress,
+            success: true
+        });
+        // one signer and threshold is 1
+        expect(res.transactions).toHaveTransaction({
+            from: multiownerWallet.address,
+            to: testAddr,
+            value: toNano('0.015'),
+            body: beginCell().storeUint(12345, 32).endCell(),
+        });
+    });
+    it('should send new order with many actions', async () => {
+        const testAddr1 = randomAddress();
+        const testAddr2 = randomAddress();
+        const testMsg1: TransferRequest = {sendMode: 1, message: internal({to: testAddr1, value: toNano('0.015'), body: beginCell().storeUint(12345, 32).endCell()})};
+        const testMsg2: TransferRequest = {sendMode: 1, message: internal({to: testAddr2, value: toNano('0.016'), body: beginCell().storeUint(12346, 32).endCell()})};
+        let initialSeqno = (await multiownerWallet.getMultiownerData()).nextOrderSeqno;
+        const res = await multiownerWallet.sendNewOrder(deployer.getSender(), [testMsg1, testMsg2], Math.floor(Date.now() / 1000 + 1000));
+
+        expect(res.transactions).toHaveTransaction({
+            from: deployer.address,
+            to: multiownerWallet.address,
+            success: true,
+            outMessagesCount: 1
+        });
+        expect((await multiownerWallet.getMultiownerData()).nextOrderSeqno).toEqual(initialSeqno + 1n);
+        let orderAddress = await multiownerWallet.getOrderAddress(initialSeqno);
+        expect(res.transactions).toHaveTransaction({
+            from: multiownerWallet.address,
+            to: orderAddress,
+            success: true
+        });
+
+        // one signer and threshold is 1
+        expect(res.transactions).toHaveTransaction({
+            from: multiownerWallet.address,
+            to: testAddr1,
+            value: toNano('0.015'),
+            body: beginCell().storeUint(12345, 32).endCell(),
+        });
+        expect(res.transactions).toHaveTransaction({
+            from: multiownerWallet.address,
+            to: testAddr2,
+            value: toNano('0.016'),
+            body: beginCell().storeUint(12346, 32).endCell(),
+        });
     });
 
 });

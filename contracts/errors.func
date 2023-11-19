@@ -1,4 +1,4 @@
-const int error::unauthorized_new_order = 100;
+const int error::unauthorized_new_order = 1007;
 const int error::not_enough_ton = 100;
 const int error::unauthorized_execute = 100;
 const int error::singers_outdated = 100;
@@ -6,7 +6,12 @@ const int error::unauthorized_init = 100;
 const int error::already_inited = 100;
 const int error::unauthorized_sign = 100;
 const int error::already_approved = 100;
-const int error::inconsistent_data = 100;
-const int error::invalid_dictionary_sequence = 100;
+const int error::expired = 111;
+const int error::inconsistent_data = 102;
+const int error::invalid_dictionary_sequence = 103;
+const int error::invalid_dictionary_sequence = 103;
+
+const int error::unknown_op = 0xffff;
+
 
 

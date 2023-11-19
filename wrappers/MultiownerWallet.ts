@@ -94,19 +94,22 @@ export class MultiownerWallet implements Contract {
               throw new Error("Too many transfers, only 254 allowed");
         }
         for (let i = 0; i < transfers.length; i++) {
+            let message = beginCell().store(storeMessageRelaxed(transfers[i].message)).endCell();
             let transfer = beginCell().storeUint(Op.actions.send_message, 32)
                                       .storeUint(transfers[i].sendMode, 8)
-                                      .store(storeMessageRelaxed(transfers[i].message))
+                                      .storeRef(message)
                            .endCell();
             order_dict.set(i, transfer);
         }
-        body = body.storeDictDirect(order_dict);
+        body = body.storeDict(order_dict);
 
         await provider.internal(via, {
             sendMode: SendMode.PAY_GAS_SEPARATELY,
             value,
             body: body.endCell()
         });
+
+        //console.log(await provider.get("get_order_address", []));
     }
 
     async getOrderAddress(provider: ContractProvider, orderSeqno: bigint) {
@@ -116,8 +119,8 @@ export class MultiownerWallet implements Contract {
 
     async getMultiownerData(provider: ContractProvider) {
         const { stack } = await provider.get("get_multiowner_data", []);
-        const nextOrderSeqno = stack.readNumber();
-        const threshold = stack.readNumber();
+        const nextOrderSeqno = stack.readBigNumber();
+        const threshold = stack.readBigNumber();
         // TODO: parse signers and proposers to Dicts
         const signers = stack.readCellOpt();
         const proposers = stack.readCellOpt();

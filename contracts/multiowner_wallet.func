@@ -13,7 +13,7 @@ int validate_dictionary_sequence(cell dict) impure {
     int index = -1;
     int expected_index = 0;
     do {
-        (int key, slice value, int found?) = dict.udict_get_next?(INDEX_SIZE, index);
+        (index, slice value, int found?) = dict.udict_get_next?(INDEX_SIZE, index);
         if (found?) {
             throw_unless(error::invalid_dictionary_sequence, index == expected_index);
             expected_index += 1;
@@ -36,6 +36,7 @@ cell order_body) impure {
     do {
         (action_index, slice action, int found?) = order_body.udict_get_next?(ACTION_INDEX_SIZE, action_index);
         if (found?) {
+            action = action.preload_ref().begin_parse();
             int action_op = action~load_op();
             if(action_op == actions::send_message) {
                 int mode = action~load_uint(8);
@@ -101,9 +102,10 @@ cell modules, cell guard) impure {
         int signer? = in_msg_body~load_bool();
         int index = in_msg_body~load_index();
         int expiration_date = in_msg_body~load_timestamp();
-        cell order_body = in_msg_body~load_ref();
+        cell order_body = in_msg_body~load_maybe_ref();
         (slice value, int found?) = (signer? ? signers : proposers).udict_get?(8, index);
         throw_unless(error::unauthorized_new_order, found? & equal_slice_bits(sender, value));
+        throw_unless(error::unauthorized_new_order, ~ order_body.null?());
 
         ;;int minimal_value = calculate_order_processing_cost(order_body, now() - expiration_date);
         int minimal_value = 200000000;
@@ -126,6 +128,7 @@ cell modules, cell guard) impure {
             init_body,
             msgflag::BOUNCEABLE,
             sendmode::CARRY_ALL_REMAINING_MESSAGE_VALUE);
+        next_order_seqno += 1;
     } elseif(op == op::execute) {
         ;; check that sender is order smart-contract and check that it has recent
         ;; signers dict
@@ -174,7 +177,7 @@ cell modules, cell guard) impure {
         modules, guard);
 }
 
-(int, int, cell, cell, cell, cell) get_multiowner_data() {
+(int, int, cell, cell, cell, cell) get_multiowner_data() method_id  {
     (int next_order_seqno, int threshold,
         cell signers, int signers_num,
         cell proposers,
@@ -186,7 +189,7 @@ cell modules, cell guard) impure {
         modules, guard);
 }
 
-slice get_order_address(int order_seqno) {
+slice get_order_address(int order_seqno) method_id {
     cell state_init = calculate_order_state_init(my_address(), order_seqno);
     return calculate_address_by_state_init(BASECHAIN, state_init);
 }
