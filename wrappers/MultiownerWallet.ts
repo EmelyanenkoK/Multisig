@@ -89,14 +89,14 @@ export class MultiownerWallet implements Contract {
         }
         body = body.storeUint(expirationDate, 48);
         // pack transfers to the order_body cell
-        let order_dict = Dictionary.empty(Dictionary.Keys.Int(8), Dictionary.Values.Cell());
+        let order_dict = Dictionary.empty(Dictionary.Keys.Uint(8), Dictionary.Values.Cell());
         if(transfers.length > 254) {
               throw new Error("Too many transfers, only 254 allowed");
         }
         for (let i = 0; i < transfers.length; i++) {
             let transfer = beginCell().storeUint(Op.actions.send_message, 32)
-                                     .storeUint(transfers[i].sendMode, 8)
-                                     .store(storeMessageRelaxed(transfers[i].message))
+                                      .storeUint(transfers[i].sendMode, 8)
+                                      .store(storeMessageRelaxed(transfers[i].message))
                            .endCell();
             order_dict.set(i, transfer);
         }
@@ -107,5 +107,22 @@ export class MultiownerWallet implements Contract {
             value,
             body: body.endCell()
         });
+    }
+
+    async getOrderAddress(provider: ContractProvider, orderSeqno: bigint) {
+         const { stack } = await provider.get("get_order_address", [{type: "int", value: orderSeqno},]);
+         return stack.readAddress();
+    }
+
+    async getMultiownerData(provider: ContractProvider) {
+        const { stack } = await provider.get("get_multiowner_data", []);
+        const nextOrderSeqno = stack.readNumber();
+        const threshold = stack.readNumber();
+        // TODO: parse signers and proposers to Dicts
+        const signers = stack.readCellOpt();
+        const proposers = stack.readCellOpt();
+        const modules = stack.readCellOpt();
+        const guard = stack.readCellOpt();
+        return { nextOrderSeqno, threshold, signers, proposers, modules, guard };
     }
 }

@@ -9,6 +9,19 @@ const int EXPERIMENTAL_FEATURES = 0;
 
 (cell -> cell) prepare_guard_execution(cont c) asm "NOP";
 
+int validate_dictionary_sequence(cell dict) impure {
+    int index = -1;
+    int expected_index = 0;
+    do {
+        (int key, slice value, int found?) = dict.udict_get_next?(INDEX_SIZE, index);
+        if (found?) {
+            throw_unless(error::invalid_dictionary_sequence, index == expected_index);
+            expected_index += 1;
+        }
+    } until (~ found?);
+    return expected_index;
+}
+
 ((int, cell, int, cell, cell, cell), ()) ~execute_order ((int, cell, int, cell, cell, cell) storage,
 cell order_body) impure {
 
@@ -32,8 +45,9 @@ cell order_body) impure {
             } elseif (action_op == actions::update_multisig_params) {
                 threshold = action~load_index();
                 signers = action~load_dict();
-                signers_num = action~load_index();
+                signers_num = validate_dictionary_sequence(signers);
                 proposers = action~load_dict();
+                validate_dictionary_sequence(proposers);
                 modules = action~load_dict();
                 guard = action~load_maybe_ref();
             }
@@ -97,7 +111,8 @@ cell modules, cell guard) impure {
 
         cell state_init = calculate_order_state_init(my_address(), next_order_seqno);
         slice order_address = calculate_address_by_state_init(BASECHAIN, state_init);
-        builder init_body = begin_cell().store_index(threshold)
+        builder init_body = begin_cell().store_body_header(op::init, 0)
+        .store_index(threshold)
         .store_dict(signers)
         .store_index(signers_num)
         .store_timestamp(expiration_date)
@@ -106,7 +121,8 @@ cell modules, cell guard) impure {
         if(signer?) {
             init_body = init_body.store_index(index);
         }
-        send_msg_builder(order_address, 0,
+        send_msg_builder_with_stateinit(order_address, 0,
+            state_init,
             init_body,
             msgflag::BOUNCEABLE,
             sendmode::CARRY_ALL_REMAINING_MESSAGE_VALUE);
@@ -156,4 +172,21 @@ cell modules, cell guard) impure {
         signers, signers_num,
         proposers,
         modules, guard);
+}
+
+(int, int, cell, cell, cell, cell) get_multiowner_data() {
+    (int next_order_seqno, int threshold,
+        cell signers, int signers_num,
+        cell proposers,
+        cell modules, cell guard) = load_data();
+    throw_unless(error::inconsistent_data, signers_num == validate_dictionary_sequence(signers));
+    validate_dictionary_sequence(proposers);
+    return (next_order_seqno, threshold,
+        signers, proposers,
+        modules, guard);
+}
+
+slice get_order_address(int order_seqno) {
+    cell state_init = calculate_order_state_init(my_address(), order_seqno);
+    return calculate_address_by_state_init(BASECHAIN, state_init);
 }

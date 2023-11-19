@@ -1,4 +1,4 @@
-import { Blockchain, SandboxContract, TreasuryContract } from '@ton-community/sandbox';
+import { Blockchain, SandboxContract, TreasuryContract, prettyLogTransactions } from '@ton-community/sandbox';
 import { beginCell, Cell, internal, toNano } from 'ton-core';
 import { MultiownerWallet, TransferRequest } from '../wrappers/MultiownerWallet';
 import '@ton-community/test-utils';
@@ -54,6 +54,9 @@ describe('MultiownerWallet', () => {
             to: multiownerWallet.address,
             success: true,
             outMessagesCount: 1
-        })
+        });
+        console.log(prettyLogTransactions(res.transactions));
+        //expect((await multiownerWallet.getMultiownerData()).nextOrderSeqno).toEqual(1);
     });
+
 });
