@@ -51,7 +51,7 @@ export class Order implements Contract {
                         .storeUint(Op.order.init, 32)
                         .storeUint(query_id, 64)
                         .storeUint(threshold, 8)
-                        .storeRef(beginCell().storeDictDirect(arrayToCell(signers)).endCell())
+                        .storeDict(arrayToCell(signers))
                         .storeUint(signers.length, 8)
                         .storeUint(expiration_date, 48)
                         .storeRef(order)

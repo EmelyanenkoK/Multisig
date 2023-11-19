@@ -52,7 +52,7 @@ describe('Order', () => {
         });
         expect(res.transactions).toHaveTransaction({
             from: orderContract.address,
-            to: signerWallet.address,
+            to: multisigWallet.address,
             op: Op.multiowner.execute
         });
 

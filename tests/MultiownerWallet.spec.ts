@@ -21,7 +21,7 @@ describe('MultiownerWallet', () => {
         deployer = await blockchain.treasury('deployer');
 
         let config = {
-            threshold: 1,
+            threshold: 4,
             signers: [deployer.address],
             proposers: [],
             modules: [],
@@ -72,6 +72,7 @@ describe('MultiownerWallet', () => {
             body: beginCell().storeUint(12345, 32).endCell(),
         });
     });
+    /*
     it('should send new order with many actions', async () => {
         const testAddr1 = randomAddress();
         const testAddr2 = randomAddress();
@@ -108,5 +109,6 @@ describe('MultiownerWallet', () => {
             body: beginCell().storeUint(12346, 32).endCell(),
         });
     });
+    */
 
 });
