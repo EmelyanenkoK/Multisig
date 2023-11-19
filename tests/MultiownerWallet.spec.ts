@@ -1,8 +1,9 @@
-import { Blockchain, SandboxContract } from '@ton-community/sandbox';
-import { Cell, toNano } from 'ton-core';
-import { MultiownerWallet } from '../wrappers/MultiownerWallet';
+import { Blockchain, SandboxContract, TreasuryContract } from '@ton-community/sandbox';
+import { beginCell, Cell, internal, toNano } from 'ton-core';
+import { MultiownerWallet, TransferRequest } from '../wrappers/MultiownerWallet';
 import '@ton-community/test-utils';
 import { compile } from '@ton-community/blueprint';
+import { randomAddress } from '@ton-community/test-utils';
 
 describe('MultiownerWallet', () => {
     let code: Cell;
@@ -13,10 +14,11 @@ describe('MultiownerWallet', () => {
 
     let blockchain: Blockchain;
     let multiownerWallet: SandboxContract<MultiownerWallet>;
+    let deployer : SandboxContract<TreasuryContract>;
 
     beforeEach(async () => {
         blockchain = await Blockchain.create();
-        const deployer = await blockchain.treasury('deployer');
+        deployer = await blockchain.treasury('deployer');
 
         let config = {
             threshold: 1,
@@ -41,5 +43,17 @@ describe('MultiownerWallet', () => {
     it('should deploy', async () => {
         // the check is done inside beforeEach
         // blockchain and multiownerWallet are ready to use
+    });
+    it('should send new order', async () => {
+        const testAddr = randomAddress();
+        const testMsg: TransferRequest = {sendMode: 0, message: internal({to: testAddr, value: toNano('0.015'), body: beginCell().storeUint(12345, 32).endCell()})};
+        const res = await multiownerWallet.sendNewOrder(deployer.getSender(), [testMsg], Math.floor(Date.now() / 1000 + 1000));
+
+        expect(res.transactions).toHaveTransaction({
+            from: deployer.address,
+            to: multiownerWallet.address,
+            success: true,
+            outMessagesCount: 1
+        })
     });
 });

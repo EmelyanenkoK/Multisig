@@ -9,13 +9,16 @@ export type MultiownerWalletConfig = {
     guard: Cell | null;
 };
 
+export type TransferRequest = {sendMode:SendMode, message:MessageRelaxed};
+
 function arrayToCell(arr: Array<Address>): Dictionary<number, Address> {
-    let dict = Dictionary.empty(Dictionary.Keys.Int(8), Dictionary.Values.Address());
+    let dict = Dictionary.empty(Dictionary.Keys.Uint(8), Dictionary.Values.Address());
     for (let i = 0; i < arr.length; i++) {
-        dict = dict.set(i, arr[i]);
+        dict.set(i, arr[i]);
     }
     return dict;
 }
+
 /*
     (int next_order_seqno, int threshold,
         cell signers, int signers_num,
@@ -38,11 +41,10 @@ export function multiownerWalletConfigToCell(config: MultiownerWalletConfig): Ce
 }
 
 export class MultiownerWallet implements Contract {
-    configuration: MultiownerWalletConfig | undefined;
 
     constructor(readonly address: Address,
                 readonly init?: { code: Cell; data: Cell },
-                configuration?: MultiownerWalletConfig) {}
+                readonly configuration?: MultiownerWalletConfig) {}
 
     static createFromAddress(address: Address) {
         return new MultiownerWallet(address);
@@ -58,27 +60,32 @@ export class MultiownerWallet implements Contract {
         await provider.internal(via, {
             value,
             sendMode: SendMode.PAY_GAS_SEPARATELY,
-            body: beginCell().endCell(),
+            body: beginCell().storeUint(0, 32).storeUint(0, 64).endCell(),
         });
     }
 
     async sendNewOrder(provider: ContractProvider, via: Sender,
-           transfers: Array<{sendMode:SendMode, message:MessageRelaxed}>,
-           expirationDate: number, value: bigint = 200000000n) {
+           transfers: Array<TransferRequest>,
+           expirationDate: number, value: bigint = 200000001n) {
+
+        const addrCmp = (x: Address) => x.equals(via.address!);
         let body = beginCell().storeUint(Op.multiowner.new_order, 32)
                               .storeUint(1, 64);
         if(this.configuration === undefined) {
             throw new Error("Configuration is not set: use createFromConfig or loadConfiguration");
         }
         // check that via.address is in signers
-        if(this.configuration!.signers.includes(via.address!)) {
+        let addrIdx = this.configuration.signers.findIndex(addrCmp);
+        if(addrIdx >= 0) {
            body = body.storeBit(true);
-           body = body.storeUint(this.configuration!.signers.findIndex(via.address!), 8);
-        } else if (this.configuration!.proposers.includes(via.address)) {
-           body = body.storeBit(false);
-           body = body.storeUint(this.configuration!.proposers.findIndex(via.address!), 8);
+           body = body.storeUint(addrIdx, 8);
         } else {
-           throw new Error("Sender is not a signer or proposer");
+           addrIdx = this.configuration.proposers.findIndex(addrCmp);
+           if (addrIdx < 0) {
+            throw new Error("Sender is not a signer or proposer");
+           }
+           body = body.storeBit(false);
+           body = body.storeUint(addrIdx, 8);
         }
         body = body.storeUint(expirationDate, 48);
         // pack transfers to the order_body cell
@@ -91,7 +98,7 @@ export class MultiownerWallet implements Contract {
                                      .storeUint(transfers[i].sendMode, 8)
                                      .store(storeMessageRelaxed(transfers[i].message))
                            .endCell();
-            order_dict = order_dict.set(i, transfer);
+            order_dict.set(i, transfer);
         }
         body = body.storeDictDirect(order_dict);
 
