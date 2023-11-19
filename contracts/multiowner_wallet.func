@@ -107,9 +107,8 @@ cell modules, cell guard) impure {
         throw_unless(error::unauthorized_new_order, found? & equal_slice_bits(sender, value));
         throw_unless(error::unauthorized_new_order, ~ order_body.null?());
 
-        ;;int minimal_value = calculate_order_processing_cost(order_body, now() - expiration_date);
-        int minimal_value = 200000000;
-        throw_unless(error::not_enough_ton, msg_value > minimal_value); ;; TODO
+        int minimal_value = calculate_order_processing_cost(order_body, now() - expiration_date);
+        throw_unless(error::not_enough_ton, msg_value > minimal_value);
 
         cell state_init = calculate_order_state_init(my_address(), next_order_seqno);
         slice order_address = calculate_address_by_state_init(BASECHAIN, state_init);

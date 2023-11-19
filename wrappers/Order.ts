@@ -81,4 +81,28 @@ export class Order implements Contract {
         });
     }
 
+
+    async getOrderData(provider: ContractProvider) {
+       /*
+       (slice multisig, int order_seqno, int threshold,
+                     int executed?, cell signers, int signers_num,
+                     int approvals, int approvals_num, int expiration_date,
+                     cell order)
+       */
+       const { stack } = await provider.get("get_order_data", []);
+       const multisig = stack.readAddress();
+       const order_seqno = stack.readBigNumber();
+       const threshold = stack.readBigNumber();
+       const executed = stack.readBoolean();
+       const signers = stack.readCell();
+       const signers_num = stack.readBigNumber();
+       const approvals = stack.readBigNumber();
+       const approvals_num = stack.readBigNumber();
+       const expiration_date = stack.readBigNumber();
+       const order = stack.readCell();
+       return {
+              multisig, order_seqno, threshold, executed, signers, signers_num,
+                approvals, approvals_num, expiration_date, order
+       };
+    }
 }

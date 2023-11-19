@@ -126,3 +126,7 @@
               approvals, approvals_num, expiration_date,
               order);
 }
+
+_ get_order_data() method_id {
+    return load_data();
+}

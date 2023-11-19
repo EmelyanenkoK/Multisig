@@ -48,16 +48,17 @@ const int CONFIG::basechain_fwd_prices = 25;
    return (bit_price_ps, cell_price_ps, flat_gas_limit, flat_gas_price, gas_price, lump_price, bit_price, cell_price);
 }
 
-const int MULTISIG_INIT_ORDER_GAS = 10000;
-const int ORDER_INIT_GAS = 10000;
+const int MULTISIG_INIT_ORDER_GAS = 16882;
+const int ORDER_INIT_GAS = 4743;
+const int ORDER_EXECUTE_GAS = 9692;
+const int MULTISIG_EXECUTE_GAS = 13078;
 ;; we call number of bits/cells without order bits/cells as "overhead"
-const int INIT_ORDER_BIT_OVERHEAD = 700;
-const int INIT_ORDER_CELL_OVERHEAD = 5;
-const int ORDER_STATE_BIT_OVERHEAD = 400;
-const int ORDER_STATE_CELL_OVERHEAD = 200;
-const int EXECUTE_ORDER_BIT_OVERHEAD = 400;
-const int EXECUTE_ORDER_CELL_OVERHEAD = 8;
-const int MULTISIG_EXECUTE_GAS = 10000;
+const int INIT_ORDER_BIT_OVERHEAD = 7194;
+const int INIT_ORDER_CELL_OVERHEAD = 23;
+const int ORDER_STATE_BIT_OVERHEAD = 6750;
+const int ORDER_STATE_CELL_OVERHEAD = 23;
+const int EXECUTE_ORDER_BIT_OVERHEAD = 1089;
+const int EXECUTE_ORDER_CELL_OVERHEAD = 2;
 
 int flat_gas_wrapper(int flat_gas_limit, int flat_gas_price, int gas_price, int gas) {
     int flat_part = min(gas, flat_gas_limit);
@@ -70,14 +71,16 @@ int calculate_order_processing_cost(cell order_body, int duration) {
        2) Forward cost for Multisig->Order message
        3) Gas cost on Order initialisation
        4) Storage cost on Order
-       5) Forward cost for Order->Multisig message
-       6) Gas cost on Multisig till accept_message
+       5) Gas cost on Order finalization
+       6) Forward cost for Order->Multisig message
+       7) Gas cost on Multisig till accept_message
     -}
     var (bit_price_ps, cell_price_ps, flat_gas_limit, flat_gas_price, gas_price, lump_price, bit_price, cell_price) = 
     get_fee_constants();
     (int order_cells, int order_bits, _) = compute_data_size(order_body, 2048);
     return flat_gas_wrapper(flat_gas_limit, flat_gas_price, gas_price, MULTISIG_INIT_ORDER_GAS) +
            flat_gas_wrapper(flat_gas_limit, flat_gas_price, gas_price, ORDER_INIT_GAS) +
+           flat_gas_wrapper(flat_gas_limit, flat_gas_price, gas_price, ORDER_EXECUTE_GAS) +
            flat_gas_wrapper(flat_gas_limit, flat_gas_price, gas_price, MULTISIG_EXECUTE_GAS) +
            muldiv((INIT_ORDER_BIT_OVERHEAD + EXECUTE_ORDER_BIT_OVERHEAD + 2 * order_bits), bit_price, 65536) +
            muldiv((INIT_ORDER_CELL_OVERHEAD + EXECUTE_ORDER_CELL_OVERHEAD + 2 * order_cells), cell_price, 65536) +
