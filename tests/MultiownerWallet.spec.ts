@@ -1,9 +1,9 @@
-import { Blockchain, SandboxContract, TreasuryContract, prettyLogTransactions } from '@ton-community/sandbox';
-import { beginCell, Cell, internal, toNano } from 'ton-core';
+import { Blockchain, SandboxContract, TreasuryContract, prettyLogTransactions } from '@ton/sandbox';
+import { beginCell, Cell, internal, toNano } from '@ton/core';
 import { MultiownerWallet, TransferRequest } from '../wrappers/MultiownerWallet';
-import '@ton-community/test-utils';
-import { compile } from '@ton-community/blueprint';
-import { randomAddress } from '@ton-community/test-utils';
+import '@ton/test-utils';
+import { compile } from '@ton/blueprint';
+import { randomAddress } from '@ton/test-utils';
 
 describe('MultiownerWallet', () => {
     let code: Cell;
@@ -56,7 +56,7 @@ describe('MultiownerWallet', () => {
             outMessagesCount: 1
         });
         console.log(prettyLogTransactions(res.transactions));
-        //expect((await multiownerWallet.getMultiownerData()).nextOrderSeqno).toEqual(1);
+        expect((await multiownerWallet.getMultiownerData()).nextOrderSeqno).toEqual(1);
     });
 
 });

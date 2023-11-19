@@ -1,4 +1,4 @@
-import { Address, beginCell,  Cell, Builder, Dictionary, Contract, contractAddress, ContractProvider, Sender, SendMode, toNano } from 'ton-core';
+import { Address, beginCell,  Cell, Builder, Dictionary, Contract, contractAddress, ContractProvider, Sender, SendMode, toNano } from '@ton/core';
 import { Op } from "../Constants";
 
 export type OrderConfig = {

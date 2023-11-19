@@ -1,4 +1,4 @@
-import { Address, beginCell,  Cell, Builder, Dictionary, MessageRelaxed, storeMessageRelaxed, Contract, contractAddress, ContractProvider, Sender, SendMode } from 'ton-core';
+import { Address, beginCell,  Cell, Builder, Dictionary, MessageRelaxed, storeMessageRelaxed, Contract, contractAddress, ContractProvider, Sender, SendMode } from '@ton/core';
 import { Op } from "../Constants";
 
 export type MultiownerWalletConfig = {

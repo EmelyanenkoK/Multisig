@@ -1,10 +1,10 @@
-import { beginCell, Cell, internal, toNano } from 'ton-core';
+import { beginCell, Cell, internal, toNano } from '@ton/core';
 import { Order, OrderConfig } from '../wrappers/Order';
 import { Op } from "../Constants";
-import '@ton-community/test-utils';
-import { compile } from '@ton-community/blueprint';
-import { randomAddress } from '@ton-community/test-utils';
-import { Blockchain, SandboxContract, TreasuryContract } from '@ton-community/sandbox';
+import '@ton/test-utils';
+import { compile } from '@ton/blueprint';
+import { randomAddress } from '@ton/test-utils';
+import { Blockchain, SandboxContract, TreasuryContract } from '@ton/sandbox';
 
 describe('Order', () => {
     let code: Cell;
