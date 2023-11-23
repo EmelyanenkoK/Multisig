@@ -1,4 +1,4 @@
-import { Address, beginCell,  Cell, Builder, Dictionary, MessageRelaxed, storeMessageRelaxed, Contract, contractAddress, ContractProvider, Sender, SendMode } from '@ton/core';
+import { Address, beginCell,  Cell, Dictionary, MessageRelaxed, storeMessageRelaxed, Contract, contractAddress, ContractProvider, Sender, SendMode } from '@ton/core';
 import { Op } from "../Constants";
 
 export type MultiownerWalletConfig = {
@@ -17,6 +17,15 @@ function arrayToCell(arr: Array<Address>): Dictionary<number, Address> {
         dict.set(i, arr[i]);
     }
     return dict;
+}
+
+function cellToArray(addrDict: Cell | null) : Array<Address>  {
+    let resArr: Array<Address> = [];
+    if(addrDict !== null) {
+        const dict = Dictionary.loadDirect(Dictionary.Keys.Uint(8), Dictionary.Values.Address(), addrDict);
+        resArr = dict.values();
+    }
+    return resArr;
 }
 
 /*
@@ -64,35 +73,16 @@ export class MultiownerWallet implements Contract {
         });
     }
 
-    async sendNewOrder(provider: ContractProvider, via: Sender,
-           transfers: Array<TransferRequest>,
-           expirationDate: number, value: bigint = 200000001n) {
-
-        const addrCmp = (x: Address) => x.equals(via.address!);
-        let body = beginCell().storeUint(Op.multiowner.new_order, 32)
-                              .storeUint(1, 64);
-        if(this.configuration === undefined) {
-            throw new Error("Configuration is not set: use createFromConfig or loadConfiguration");
-        }
-        // check that via.address is in signers
-        let addrIdx = this.configuration.signers.findIndex(addrCmp);
-        if(addrIdx >= 0) {
-           body = body.storeBit(true);
-           body = body.storeUint(addrIdx, 8);
-        } else {
-           addrIdx = this.configuration.proposers.findIndex(addrCmp);
-           if (addrIdx < 0) {
-            throw new Error("Sender is not a signer or proposer");
-           }
-           body = body.storeBit(false);
-           body = body.storeUint(addrIdx, 8);
-        }
-        body = body.storeUint(expirationDate, 48);
-        // pack transfers to the order_body cell
+    static newOrderMessage(transfers: Array<TransferRequest>,
+                           expirationDate: number,
+                           isSigner: boolean,
+                           addrIdx: number,
+                           query_id: number | bigint = 0) {
         let order_dict = Dictionary.empty(Dictionary.Keys.Uint(8), Dictionary.Values.Cell());
         if(transfers.length > 254) {
               throw new Error("Too many transfers, only 254 allowed");
         }
+        // pack transfers to the order_body cell
         for (let i = 0; i < transfers.length; i++) {
             let message = beginCell().store(storeMessageRelaxed(transfers[i].message)).endCell();
             let transfer = beginCell().storeUint(Op.actions.send_message, 32)
@@ -101,12 +91,45 @@ export class MultiownerWallet implements Contract {
                            .endCell();
             order_dict.set(i, transfer);
         }
-        body = body.storeDict(order_dict);
+
+        return beginCell().storeUint(Op.multiowner.new_order, 32)
+                          .storeUint(query_id, 64)
+                          .storeBit(isSigner)
+                          .storeUint(addrIdx, 8)
+                          .storeUint(expirationDate, 48)
+                          .storeDict(order_dict)
+               .endCell();
+    }
+    async sendNewOrder(provider: ContractProvider, via: Sender,
+           transfers: Array<TransferRequest>,
+           expirationDate: number, value: bigint = 200000000n, addrIdx?: number, isSigner?: boolean ) {
+
+        if(this.configuration === undefined) {
+            throw new Error("Configuration is not set: use createFromConfig or loadConfiguration");
+        }
+        // check that via.address is in signers
+        // We can only check in advance when address is known. Otherwise we have to trust isSigner flag
+        if(via.address !== undefined) {
+            const addrCmp = (x: Address) => x.equals(via.address!);
+            addrIdx = this.configuration.signers.findIndex(addrCmp);
+            if(addrIdx >= 0) {
+               isSigner = true;
+            } else {
+               addrIdx = this.configuration.proposers.findIndex(addrCmp);
+               if (addrIdx < 0) {
+                throw new Error("Sender is not a signer or proposer");
+               }
+               isSigner = false;
+            }
+        }
+        else if(isSigner === undefined || addrIdx == undefined) {
+                throw new Error("If sender address is not known, addrIdx and isSigner parameres required");
+        }
 
         await provider.internal(via, {
             sendMode: SendMode.PAY_GAS_SEPARATELY,
             value,
-            body: body.endCell()
+            body: MultiownerWallet.newOrderMessage(transfers, expirationDate, isSigner, addrIdx, 1)
         });
 
         //console.log(await provider.get("get_order_address", []));
@@ -121,9 +144,8 @@ export class MultiownerWallet implements Contract {
         const { stack } = await provider.get("get_multiowner_data", []);
         const nextOrderSeqno = stack.readBigNumber();
         const threshold = stack.readBigNumber();
-        // TODO: parse signers and proposers to Dicts
-        const signers = stack.readCellOpt();
-        const proposers = stack.readCellOpt();
+        const signers = cellToArray(stack.readCellOpt());
+        const proposers = cellToArray(stack.readCellOpt());
         const modules = stack.readCellOpt();
         const guard = stack.readCellOpt();
         return { nextOrderSeqno, threshold, signers, proposers, modules, guard };
