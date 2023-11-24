@@ -104,7 +104,8 @@ cell modules, cell guard) impure {
         int expiration_date = in_msg_body~load_timestamp();
         cell order_body = in_msg_body~load_dict();
         (slice value, int found?) = (signer? ? signers : proposers).udict_get?(8, index);
-        throw_unless(error::unauthorized_new_order, found? & equal_slice_bits(sender, value));
+        throw_unless(error::unauthorized_new_order, found?);
+        throw_unless(error::unauthorized_new_order, equal_slice_bits(sender, value));
         throw_unless(error::unauthorized_new_order, ~ order_body.null?());
 
         int minimal_value = calculate_order_processing_cost(order_body, now() - expiration_date);
