@@ -189,6 +189,10 @@ cell modules, cell guard) impure {
         modules, guard);
 }
 
+(int) get_order_estimate(cell order, int expiration_date) method_id {
+    return calculate_order_processing_cost(order, expiration_date - now());
+}
+
 slice get_order_address(int order_seqno) method_id {
     cell state_init = calculate_order_state_init(my_address(), order_seqno);
     return calculate_address_by_state_init(BASECHAIN, state_init);
