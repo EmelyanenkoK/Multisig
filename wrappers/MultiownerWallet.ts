@@ -1,20 +1,42 @@
 import { Address, beginCell,  Cell, Dictionary, MessageRelaxed, storeMessageRelaxed, Contract, contractAddress, ContractProvider, Sender, SendMode } from '@ton/core';
 import { Op } from "../Constants";
 
+export type Module = {
+    address: Address,
+    module: Cell
+};
 export type MultiownerWalletConfig = {
     threshold: number;
     signers: Array<Address>;
     proposers: Array<Address>;
-    modules: Array<Address>;
+    modules: Array<Module>;
     guard: Cell | null;
 };
 
-export type TransferRequest = {sendMode:SendMode, message:MessageRelaxed};
+export type TransferRequest = { type: 'transfer', sendMode:SendMode, message:MessageRelaxed};
+export type UpdateRequest   = {
+    type: 'update',
+    threshold: number,
+    signers: Array<Address>,
+    proposers: Array<Address>,
+    modules?: Cell, // TODO proper modules packaging
+    guard?: Cell
+};
+
+export type Order = TransferRequest | UpdateRequest;
 
 function arrayToCell(arr: Array<Address>): Dictionary<number, Address> {
     let dict = Dictionary.empty(Dictionary.Keys.Uint(8), Dictionary.Values.Address());
     for (let i = 0; i < arr.length; i++) {
         dict.set(i, arr[i]);
+    }
+    return dict;
+}
+
+function moduleArrayToCell(arr: Array<Module>) {
+    let dict = Dictionary.empty(Dictionary.Keys.Address(), Dictionary.Values.Cell());
+    for (let module of arr) {
+        dict.set(module.address, module.module);
     }
     return dict;
 }
@@ -44,7 +66,7 @@ export function multiownerWalletConfigToCell(config: MultiownerWalletConfig): Ce
                 .storeDict(arrayToCell(config.signers))
                 .storeUint(config.signers.length, 8)
                 .storeDict(arrayToCell(config.proposers))
-                .storeDict(arrayToCell(config.modules))
+                .storeDict(moduleArrayToCell(config.modules))
                 .storeMaybeRef(config.guard)
            .endCell();
 }
@@ -73,23 +95,40 @@ export class MultiownerWallet implements Contract {
         });
     }
 
-    static newOrderMessage(transfers: Array<TransferRequest>,
+    static packTransferRequest(transfer: TransferRequest) {
+        let message = beginCell().store(storeMessageRelaxed(transfer.message)).endCell();
+        return beginCell().storeUint(Op.actions.send_message, 32)
+                          .storeUint(transfer.sendMode, 8)
+                          .storeRef(message)
+               .endCell();
+
+    }
+    static packUpdateRequest(update: UpdateRequest) {
+        return beginCell().storeUint(Op.actions.update_multisig_params, 32)
+                          .storeUint(update.threshold, 8)
+                          .storeDict(arrayToCell(update.signers))
+                          .storeDict(arrayToCell(update.proposers))
+                          .storeMaybeRef(update.modules)
+                          .storeMaybeRef(update.guard)
+               .endCell();
+    }
+    static newOrderMessage(orders: Array<Order>,
                            expirationDate: number,
                            isSigner: boolean,
                            addrIdx: number,
                            query_id: number | bigint = 0) {
+        if(orders.length == 0) {
+            throw new Error("Order list can't be empty!");
+        }
         let order_dict = Dictionary.empty(Dictionary.Keys.Uint(8), Dictionary.Values.Cell());
-        if(transfers.length > 254) {
+        if(orders.length > 254) {
               throw new Error("Too many transfers, only 254 allowed");
         }
         // pack transfers to the order_body cell
-        for (let i = 0; i < transfers.length; i++) {
-            let message = beginCell().store(storeMessageRelaxed(transfers[i].message)).endCell();
-            let transfer = beginCell().storeUint(Op.actions.send_message, 32)
-                                      .storeUint(transfers[i].sendMode, 8)
-                                      .storeRef(message)
-                           .endCell();
-            order_dict.set(i, transfer);
+        for (let i = 0; i < orders.length; i++) {
+            const order = orders[i];
+            const orderCell = order.type === "transfer" ? MultiownerWallet.packTransferRequest(order) : MultiownerWallet.packUpdateRequest(order);
+            order_dict.set(i, orderCell);
         }
 
         return beginCell().storeUint(Op.multiowner.new_order, 32)
@@ -101,7 +140,7 @@ export class MultiownerWallet implements Contract {
                .endCell();
     }
     async sendNewOrder(provider: ContractProvider, via: Sender,
-           transfers: Array<TransferRequest>,
+           orders: Array<Order>,
            expirationDate: number, value: bigint = 200000000n, addrIdx?: number, isSigner?: boolean ) {
 
         if(this.configuration === undefined) {
@@ -129,7 +168,7 @@ export class MultiownerWallet implements Contract {
         await provider.internal(via, {
             sendMode: SendMode.PAY_GAS_SEPARATELY,
             value,
-            body: MultiownerWallet.newOrderMessage(transfers, expirationDate, isSigner, addrIdx, 1)
+            body: MultiownerWallet.newOrderMessage(orders, expirationDate, isSigner, addrIdx, 1)
         });
 
         //console.log(await provider.get("get_order_address", []));
@@ -138,6 +177,12 @@ export class MultiownerWallet implements Contract {
     async getOrderAddress(provider: ContractProvider, orderSeqno: bigint) {
          const { stack } = await provider.get("get_order_address", [{type: "int", value: orderSeqno},]);
          return stack.readAddress();
+    }
+
+    async getOrderEstimate(provider: ContractProvider, order: Order, expiration_date: bigint) {
+        const orderCell = order.type == "transfer" ? MultiownerWallet.packTransferRequest(order) : MultiownerWallet.packUpdateRequest(order);
+        const { stack } = await provider.get('get_order_estimate', [{type: "cell", cell: orderCell}, {type: "int", value: expiration_date}]);
+        return stack.readBigNumber();
     }
 
     async getMultiownerData(provider: ContractProvider) {
