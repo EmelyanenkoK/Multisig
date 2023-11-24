@@ -1,5 +1,5 @@
-import { randomAddress } from '@ton/test-utils';
-import {Address} from '@ton/core';
+import { randomAddress, compareTransaction, flattenTransaction, FlatTransactionComparable } from "@ton/test-utils";
+import {Address, Transaction} from '@ton/core';
 
 export const differentAddress = (oldAddr:Address) => {
 
@@ -17,4 +17,8 @@ export const getRandom = (min:number, max:number) => {
 
 export const getRandomInt = (min:number, max:number) => {
     return Math.round(getRandom(min, max));
+}
+
+export const findTransaction = <T extends Transaction>(txs: T[], match: FlatTransactionComparable) => {
+    return txs.find(x => compareTransaction(flattenTransaction(x), match));
 }
