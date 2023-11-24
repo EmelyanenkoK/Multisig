@@ -62,7 +62,7 @@ const int EXECUTE_ORDER_CELL_OVERHEAD = 2;
 
 int flat_gas_wrapper(int flat_gas_limit, int flat_gas_price, int gas_price, int gas) {
     int flat_part = min(gas, flat_gas_limit);
-    return flat_gas_price + (gas - flat_part) * gas_price;
+    return (flat_gas_price + (gas - flat_part) * gas_price) >> 16;
 }
 
 int calculate_order_processing_cost(cell order_body, int duration) {
