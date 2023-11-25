@@ -1,7 +1,8 @@
-import { Blockchain, SandboxContract, TreasuryContract, prettyLogTransactions } from '@ton/sandbox';
+import { Blockchain, SandboxContract, TreasuryContract, prettyLogTransactions, BlockchainTransaction } from '@ton/sandbox';
 import { beginCell, Cell, internal, toNano, Transaction, storeAccountStorage, storeMessage } from '@ton/core';
-import { MultiownerWallet, TransferRequest, Action } from '../wrappers/MultiownerWallet';
+import { MultiownerWallet, TransferRequest, Action, MultiownerWalletConfig } from '../wrappers/MultiownerWallet';
 import { Order } from '../wrappers/Order';
+import { Op } from '../Constants';
 import '@ton/test-utils';
 import { compile } from '@ton/blueprint';
 import { randomAddress } from '@ton/test-utils';
@@ -36,6 +37,8 @@ describe('FeeComputation', () => {
     let multiowner_code: Cell;
     let order_code: Cell;
 
+    let curTime : () => number;
+
     beforeAll(async () => {
         multiowner_code = await compile('MultiownerWallet');
         order_code = await compile('Order');
@@ -65,6 +68,7 @@ describe('FeeComputation', () => {
 
         const deployResult = await multiownerWallet.sendDeploy(deployer.getSender(), toNano('0.05'));
 
+        curTime = () => blockchain.now ?? Math.floor(Date.now() / 1000);
     });
 
     it('should send new order', async () => {
@@ -151,8 +155,89 @@ describe('FeeComputation', () => {
         let storageEstimate = BigInt(Math.floor((orderBodyStats.bits +orderStateOverhead.bits + orderBodyStats.cells * 500 + orderStateOverhead.cells * 500) * timeSpan / 65536));
         let manualFees = gasEstimate + fwdEstimate + storageEstimate;
         console.log("orderEstimates", orderEstimateOnContract, manualFees);
-
     });
+    it('common cases gas fees multisig 7/10', async () => {
+        const assertMultisig = async (threshold: number, total: number, txcount: number, lifetime: number, signer_creates: boolean) => {
+            let totalGas = 0n;
+            const testWallet = await blockchain.treasury('test_wallet'); // Make sure we don't bounce
+            const signers = await blockchain.createWallets(total);
+            const config : MultiownerWalletConfig = {
+                threshold,
+                signers : signers.map(x => x.address),
+                proposers: [proposer.address],
+                modules: [],
+                guard: null
+            };
+
+            const multisig = blockchain.openContract(MultiownerWallet.createFromConfig(config, multiowner_code));
 
 
+            const creator   = signer_creates ? signers[0] : proposer;
+            const signerIdx = signer_creates ? 1 : 0;
+            let res = await multisig.sendDeploy(deployer.getSender(), toNano('10'));
+            expect(res.transactions).toHaveTransaction({
+                from: deployer.address,
+                to: multisig.address,
+                deploy: true,
+                success: true
+            });
+
+            const dataBefore   = await multisig.getMultiownerData();
+            const initSeqno    = dataBefore.nextOrderSeqno;
+            const orderContract = blockchain.openContract(Order.createFromAddress(await multisig.getOrderAddress(initSeqno)));
+
+            blockchain.now = curTime();
+            const testMsg: TransferRequest = {type:"transfer", sendMode: 1, message: internal({to: testWallet.address, value: toNano('0.015'), body: beginCell().storeUint(12345, 32).endCell()})};
+            const actions: Array<TransferRequest> = [];
+            for (let i = 0; i < txcount; i++) {
+                actions.push(testMsg);
+            }
+            res = await multisig.sendNewOrder(creator.getSender(), actions, blockchain.now + lifetime);
+            expect(res.transactions).toHaveTransaction({
+                from: creator.address,
+                to: multisig.address,
+                success: true
+            });
+            expect(res.transactions).toHaveTransaction({
+                from: multisig.address,
+                to: orderContract.address,
+                deploy: true,
+                success: true
+            });
+
+            const summTx = (summ: bigint, tx: BlockchainTransaction) => summ + tx.totalFees.coins;
+            totalGas += res.transactions.reduce(summTx, 0n);
+
+            blockchain.now += lifetime;
+            for (let i = signerIdx; i < threshold; i++ ) {
+                res = await orderContract.sendApprove(signers[i].getSender(), i);
+                totalGas += res.transactions.reduce(summTx, 0n);
+            }
+            expect(res.transactions).toHaveTransaction({
+                from: orderContract.address,
+                to: multisig.address,
+                op: Op.multiowner.execute,
+                success: true
+            });
+            expect(res.transactions).toHaveTransaction({
+                from: multisig.address,
+                to: testWallet.address,
+                success: true
+            });
+
+            return totalGas;
+        };
+
+
+        const week = 3600 * 24 * 7;
+        const gas1 = await assertMultisig(7, 10, 1, week, false);
+        const gas2 = await assertMultisig(2, 3, 1, week, true);
+        const gas3 = await assertMultisig(1, 3, 1, week, true);
+        const gas4 = await assertMultisig(7, 10, 100, week, false);
+
+        console.log("Multisig 7/10 1 transfer 1 week proposer:", gas1);
+        console.log("Multisig 2/3 1 transfer 1 week signer:", gas2);
+        console.log("Multisig 1/3 1 transfer 1 week signer:", gas3);
+        console.log("Multisig 7/10 100 transfer 1 week proposer:", gas4);
+    });
 });
