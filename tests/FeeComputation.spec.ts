@@ -69,8 +69,8 @@ describe('FeeComputation', () => {
 
     it('should send new order', async () => {
         const testAddr = randomAddress();
-        const testMsg: TransferRequest = {sendMode: 1, message: internal({to: testAddr, value: toNano('0.015'), body: beginCell().storeUint(12345, 32).endCell()})};
-        const testMsg2: TransferRequest = {sendMode: 1, message: internal({to: randomAddress(), value: toNano('0.017'), body: beginCell().storeUint(123425, 32).endCell()})};
+        const testMsg: TransferRequest = {type:"transfer", sendMode: 1, message: internal({to: testAddr, value: toNano('0.015'), body: beginCell().storeUint(12345, 32).endCell()})};
+        const testMsg2: TransferRequest = {type:"transfer", sendMode: 1, message: internal({to: randomAddress(), value: toNano('0.017'), body: beginCell().storeUint(123425, 32).endCell()})};
         const res = await multiownerWallet.sendNewOrder(deployer.getSender(), [testMsg, testMsg, testMsg, testMsg2], Math.floor(Date.now() / 1000 + 1000));
 
         /*

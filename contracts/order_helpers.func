@@ -33,7 +33,7 @@ const int CONFIG::basechain_fwd_prices = 25;
     cell storage_config = config_param(CONFIG::storage_prices);
     ;; lets get latest prices
     (int timestamp, slice storage_slice, int found?) = storage_config.udict_get_max?(32);
-    storage_slice~skip_bits(32);
+    storage_slice~skip_bits(32 + 8); ;; skip constructor byte and utime_since
     (int bit_price_ps, int cell_price_ps) = (storage_slice~load_uint(64), storage_slice~load_uint(64));
     
     slice gas_config = config_param(CONFIG::basechain_gas_prices).begin_parse();
@@ -42,8 +42,8 @@ const int CONFIG::basechain_fwd_prices = 25;
     gas_config~skip_bits(8); ;;gas_prices tag
     (int gas_price) = (gas_config~load_uint(64));
     
-    slice fwd_config = config_param(CONFIG::basechain_gas_prices).begin_parse();
-    (int lump_price, int bit_price, int cell_price) = (gas_config~load_uint(64), gas_config~load_uint(64), gas_config~load_uint(64));
+    slice fwd_config = config_param(CONFIG::basechain_fwd_prices).begin_parse().skip_bits(8); ;; skip tag
+    (int lump_price, int bit_price, int cell_price) = (fwd_config~load_uint(64), fwd_config~load_uint(64), fwd_config~load_uint(64));
     
    return (bit_price_ps, cell_price_ps, flat_gas_limit, flat_gas_price, gas_price, lump_price, bit_price, cell_price);
 }
@@ -62,7 +62,7 @@ const int EXECUTE_ORDER_CELL_OVERHEAD = 2;
 
 int flat_gas_wrapper(int flat_gas_limit, int flat_gas_price, int gas_price, int gas) {
     int flat_part = min(gas, flat_gas_limit);
-    return flat_gas_price + (gas - flat_part) * gas_price;
+    return (flat_gas_price + (gas - flat_part) * gas_price) >> 16;
 }
 
 int calculate_order_processing_cost(cell order_body, int duration) {

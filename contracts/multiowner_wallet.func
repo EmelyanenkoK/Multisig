@@ -102,12 +102,13 @@ cell modules, cell guard) impure {
         int signer? = in_msg_body~load_bool();
         int index = in_msg_body~load_index();
         int expiration_date = in_msg_body~load_timestamp();
-        cell order_body = in_msg_body~load_maybe_ref();
+        cell order_body = in_msg_body~load_dict();
         (slice value, int found?) = (signer? ? signers : proposers).udict_get?(8, index);
-        throw_unless(error::unauthorized_new_order, found? & equal_slice_bits(sender, value));
+        throw_unless(error::unauthorized_new_order, found?);
+        throw_unless(error::unauthorized_new_order, equal_slice_bits(sender, value));
         throw_unless(error::unauthorized_new_order, ~ order_body.null?());
 
-        int minimal_value = calculate_order_processing_cost(order_body, now() - expiration_date);
+        int minimal_value = calculate_order_processing_cost(order_body, expiration_date - now());
         throw_unless(error::not_enough_ton, msg_value > minimal_value);
 
         cell state_init = calculate_order_state_init(my_address(), next_order_seqno);
@@ -186,6 +187,10 @@ cell modules, cell guard) impure {
     return (next_order_seqno, threshold,
         signers, proposers,
         modules, guard);
+}
+
+(int) get_order_estimate(cell order, int expiration_date) method_id {
+    return calculate_order_processing_cost(order, expiration_date - now());
 }
 
 slice get_order_address(int order_seqno) method_id {

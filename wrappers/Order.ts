@@ -1,4 +1,4 @@
-import { Address, beginCell,  Cell, Builder, Dictionary, Contract, contractAddress, ContractProvider, Sender, SendMode, toNano } from '@ton/core';
+import { Address, beginCell,  Cell, Builder, BitString, Dictionary, Contract, contractAddress, ContractProvider, Sender, SendMode, toNano } from '@ton/core';
 import { Op } from "../Constants";
 
 export type OrderConfig = {
@@ -12,6 +12,15 @@ function arrayToCell(arr: Array<Address>): Dictionary<number, Address> {
         dict.set(i, arr[i]);
     }
     return dict;
+}
+
+function cellToArray(addrDict: Cell | null) : Array<Address>  {
+    let resArr: Array<Address> = [];
+    if(addrDict !== null) {
+        const dict = Dictionary.loadDirect(Dictionary.Keys.Uint(8), Dictionary.Values.Address(), addrDict);
+        resArr = dict.values();
+    }
+    return resArr;
 }
 
 export function orderConfigToCell(config: OrderConfig): Cell {
@@ -92,17 +101,17 @@ export class Order implements Contract {
        const { stack } = await provider.get("get_order_data", []);
        const multisig = stack.readAddress();
        const order_seqno = stack.readBigNumber();
-       const threshold = stack.readBigNumber();
+       const threshold = stack.readNumber();
        const executed = stack.readBoolean();
-       const signers = stack.readCell();
+       const signers = cellToArray(stack.readCell());
        const signers_num = stack.readBigNumber();
-       const approvals = stack.readBigNumber();
-       const approvals_num = stack.readBigNumber();
+       const approvals = Buffer.from(stack.readBigNumber().toString(16), 'hex');
+       const approvals_num = stack.readNumber();
        const expiration_date = stack.readBigNumber();
        const order = stack.readCell();
        return {
               multisig, order_seqno, threshold, executed, signers, signers_num,
-                approvals, approvals_num, expiration_date, order
+                approvals: new BitString(approvals, 0, approvals_num), approvals_num, expiration_date, order
        };
     }
 }
