@@ -152,7 +152,7 @@ describe('MultiownerWallet', () => {
             op: Op.multiowner.execute
         });
     });
-    it.skip('order expiration time should exceed current time', async () => {
+    it('order expiration time should exceed current time', async () => {
 
         const initialSeqno = (await multiownerWallet.getMultiownerData()).nextOrderSeqno;
         let   orderAddress = await multiownerWallet.getOrderAddress(initialSeqno);
@@ -162,21 +162,23 @@ describe('MultiownerWallet', () => {
             from: deployer.address,
             to: multiownerWallet.address,
             success: false,
-            aborted: true
+            aborted: true,
+            exitCode: Errors.multiowner.expired
         });
         expect(res.transactions).not.toHaveTransaction({
             from: multiownerWallet.address,
             to: orderAddress
         });
     });
-    it.skip('should reject order creation with insufficient incomming value', async () => {
+    it('should reject order creation with insufficient incomming value', async () => {
         const year = 3600 * 24 * 365;
-        const msgValue = toNano('0.2'); // Default sendNewOrder value
 
         const initialSeqno = (await multiownerWallet.getMultiownerData()).nextOrderSeqno;
         let   orderAddress = await multiownerWallet.getOrderAddress(initialSeqno);
 
-        // I assume default value should not cut it for a yearly storage.
+        // Twice as low as we need
+        const msgValue = (await multiownerWallet.getOrderEstimate([testMsg], BigInt(curTime() + year))) / 2n;
+
         const res = await multiownerWallet.sendNewOrder(deployer.getSender(), [testMsg], curTime() + year, msgValue);
         expect(res.transactions).toHaveTransaction({
             from: deployer.address,
@@ -190,7 +192,8 @@ describe('MultiownerWallet', () => {
             to: orderAddress
         });
     });
-    it.skip('should account for message value in tranfer order', async () => {
+    // TODO delete
+    it.skip('should account for message value in transfer order', async () => {
         // So we have message thar requests to transfer substantial amount of TON
         const testMsg: TransferRequest = {type: "transfer", sendMode: 1, message: internal_relaxed({to: randomAddress(), value: toNano('100'), body: beginCell().storeUint(12345, 32).endCell()})};
 
@@ -291,7 +294,7 @@ describe('MultiownerWallet', () => {
             body: testMsg.message.body
         });
     });
-    it('should should be possible to execute order by post init approval', async () => {
+    it('should be possible to execute order by post init approval', async () => {
         // Same test as above, but with manulal approval
         let initialSeqno = (await multiownerWallet.getMultiownerData()).nextOrderSeqno;
         // Gets deployed by proposer, so first approval is not granted right away
@@ -328,16 +331,14 @@ describe('MultiownerWallet', () => {
         });
     });
 
-    /*
-    TODO
     it('order estimate should work', async () => {
         const testMsg: TransferRequest = {type: "transfer", sendMode: 1, message: internal_relaxed({to: randomAddress(), value: toNano('0.015'), body: beginCell().storeUint(12345, 32).endCell()})};
-        const hrEst = await multiownerWallet.getOrderEstimate(testMsg, BigInt(curTime() + 3600));
+        const hrEst = await multiownerWallet.getOrderEstimate([testMsg], BigInt(curTime() + 3600));
         console.log("Estimate for one hour:", hrEst);
-        const yearEst = await multiownerWallet.getOrderEstimate(testMsg, BigInt(curTime() + 3600 * 24 * 365));
+        const yearEst = await multiownerWallet.getOrderEstimate([testMsg], BigInt(curTime() + 3600 * 24 * 365));
         console.log("Estimate for yearly storage:", yearEst);
         console.log("Storage delta:", yearEst - hrEst);
-    });*/
+    });
     it('should send new order with many actions in specified order', async () => {
         const testAddr1 = randomAddress();
         const testAddr2 = randomAddress();
