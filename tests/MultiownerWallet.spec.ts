@@ -454,6 +454,88 @@ describe('MultiownerWallet', () => {
         expect(dataAfter.signers[0]).toEqualAddress(newSigner.address);
         expect(dataAfter.proposers.length).toBe(0);
     });
+    it('should reject multisig parameters with inconsistently ordered signers or proposers', async () => {
+        // To produce inconsistent dictionary we have to craft it manually
+        const malformed = Dictionary.empty(Dictionary.Keys.Uint(8), Dictionary.Values.Address());
+        malformed.set(0, randomAddress());
+        malformed.set(2, randomAddress());
+        let updateCell = beginCell().storeUint(Op.actions.update_multisig_params, 32)
+                   .storeUint(4, 8)
+                   .storeDict(malformed) // signers
+                   .storeDict(null) // empty proposers
+                   .storeDict(null) // empty modules
+                   .storeMaybeRef(null) // empty guard.
+        .endCell();
+
+        const orderDict = Dictionary.empty(Dictionary.Keys.Uint(8), Dictionary.Values.Cell());
+        orderDict.set(0, updateCell);
+
+        let orderCell = beginCell().storeDictDirect(orderDict).endCell();
+
+        let dataBefore   = await multiownerWallet.getMultiownerData();
+        let orderAddress = await multiownerWallet.getOrderAddress(dataBefore.nextOrderSeqno);
+        let res = await multiownerWallet.sendNewOrder(deployer.getSender(), orderCell, curTime() + 100);
+        expect(res.transactions).toHaveTransaction({
+            from: orderAddress,
+            to: multiownerWallet.address,
+            op: Op.multiowner.execute,
+            aborted: true,
+            success: false,
+            exitCode: Errors.multiowner.invalid_dictionary_sequence
+        });
+
+        const stringify = (x: Address) => x.toString();
+        let dataAfter = await multiownerWallet.getMultiownerData();
+        // Order seqno should increase
+        expect(dataAfter.nextOrderSeqno).toEqual(dataBefore.nextOrderSeqno + 1n);
+        // Rest stay same
+        expect(dataAfter.threshold).toEqual(dataBefore.threshold);
+        expect(dataAfter.signers.map(stringify)).toEqual(dataBefore.signers.map(stringify));
+        expect(dataAfter.proposers.map(stringify)).toEqual(dataBefore.proposers.map(stringify));
+        expect(dataAfter.modules).toEqual(dataBefore.modules);
+        expect(dataAfter.guard).toEqual(dataBefore.guard);
+
+        dataBefore   = await multiownerWallet.getMultiownerData();
+        orderAddress = await multiownerWallet.getOrderAddress(dataBefore.nextOrderSeqno);
+
+        // Now let's test if proposers order is checked
+        malformed.clear();
+        // Let's be bit sneaky. It's kinda consistent, but starts with 1. Should fail anyways.
+        malformed.set(1, randomAddress());
+        malformed.set(2, randomAddress());
+
+        updateCell = beginCell().storeUint(Op.actions.update_multisig_params, 32)
+                                .storeUint(4, 8)
+                                .storeDict(null) // Empty signers? Yes, that is allowed
+                                .storeDict(malformed) // proposers
+                                .storeDict(null) // modules
+                                .storeMaybeRef(null)  // guard
+                     .endCell();
+
+        // All over again
+        orderDict.set(0, updateCell);
+        orderCell = beginCell().storeDictDirect(orderDict).endCell();
+
+        res = await multiownerWallet.sendNewOrder(deployer.getSender(), orderCell, curTime() + 100);
+        expect(res.transactions).toHaveTransaction({
+            from: orderAddress,
+            to: multiownerWallet.address,
+            op: Op.multiowner.execute,
+            aborted: true,
+            success: false,
+            exitCode: Errors.multiowner.invalid_dictionary_sequence
+        });
+
+        dataAfter = await multiownerWallet.getMultiownerData();
+        // Order seqno should increase
+        expect(dataAfter.nextOrderSeqno).toEqual(dataBefore.nextOrderSeqno + 1n);
+        // Rest stay same
+        expect(dataAfter.threshold).toEqual(dataBefore.threshold);
+        expect(dataAfter.signers.map(stringify)).toEqual(dataBefore.signers.map(stringify));
+        expect(dataAfter.proposers.map(stringify)).toEqual(dataBefore.proposers.map(stringify));
+        expect(dataAfter.modules).toEqual(dataBefore.modules);
+        expect(dataAfter.guard).toEqual(dataBefore.guard);
+    });
     it('should accept execute internal only from self address', async () => {
         const nobody = await blockchain.treasury('nobody');
         // Let's test every role

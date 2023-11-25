@@ -21,6 +21,7 @@ export abstract class Errors {
         not_enough_ton : 100,
         unauthorized_execute : 101,
         singers_outdated : 102,
+        invalid_dictionary_sequence: 103
     }
 };
 
