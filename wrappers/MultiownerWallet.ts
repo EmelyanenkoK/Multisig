@@ -24,6 +24,7 @@ export type UpdateRequest   = {
 };
 
 export type Order = TransferRequest | UpdateRequest;
+export type Action = TransferRequest | UpdateRequest;
 
 function arrayToCell(arr: Array<Address>): Dictionary<number, Address> {
     let dict = Dictionary.empty(Dictionary.Keys.Uint(8), Dictionary.Values.Address());
@@ -63,7 +64,7 @@ export function multiownerWalletConfigToCell(config: MultiownerWalletConfig): Ce
     return beginCell()
                 .storeUint(0, 32)
                 .storeUint(config.threshold, 8)
-                .storeDict(arrayToCell(config.signers))
+                .storeRef(beginCell().storeDictDirect(arrayToCell(config.signers)))
                 .storeUint(config.signers.length, 8)
                 .storeDict(arrayToCell(config.proposers))
                 .storeDict(moduleArrayToCell(config.modules))
@@ -106,12 +107,27 @@ export class MultiownerWallet implements Contract {
     static packUpdateRequest(update: UpdateRequest) {
         return beginCell().storeUint(Op.actions.update_multisig_params, 32)
                           .storeUint(update.threshold, 8)
-                          .storeDict(arrayToCell(update.signers))
+                          .storeRef(beginCell().storeDictDirect(arrayToCell(update.signers)))
                           .storeDict(arrayToCell(update.proposers))
                           .storeMaybeRef(update.modules)
                           .storeMaybeRef(update.guard)
                .endCell();
     }
+
+    static packOrder(actions: Array<Action>) {
+        let order_dict = Dictionary.empty(Dictionary.Keys.Uint(8), Dictionary.Values.Cell());
+        if(actions.length > 254) {
+              throw new Error("Too many transfers, only 254 allowed");
+        }
+        // pack transfers to the order_body cell
+        for (let i = 0; i < actions.length; i++) {
+            const action = actions[i];
+            const actionCell = action.type === "transfer" ? MultiownerWallet.packTransferRequest(action) : MultiownerWallet.packUpdateRequest(action);
+            order_dict.set(i, actionCell);
+        }
+        return beginCell().storeDictDirect(order_dict).endCell();
+    }
+
     static newOrderMessage(orders: Array<Order> | Cell,
                            expirationDate: number,
                            isSigner: boolean,
@@ -131,17 +147,8 @@ export class MultiownerWallet implements Contract {
         if(orders.length == 0) {
             throw new Error("Order list can't be empty!");
         }
-        let order_dict = Dictionary.empty(Dictionary.Keys.Uint(8), Dictionary.Values.Cell());
-        if(orders.length > 254) {
-              throw new Error("Too many transfers, only 254 allowed");
-        }
-        // pack transfers to the order_body cell
-        for (let i = 0; i < orders.length; i++) {
-            const order = orders[i];
-            const orderCell = order.type === "transfer" ? MultiownerWallet.packTransferRequest(order) : MultiownerWallet.packUpdateRequest(order);
-            order_dict.set(i, orderCell);
-        }
-        return msgBody.storeDict(order_dict).endCell();
+        let order_cell = MultiownerWallet.packOrder(orders);
+        return msgBody.storeRef(order_cell).endCell();
     }
     async sendNewOrder(provider: ContractProvider, via: Sender,
            orders: Array<Order> | Cell,
@@ -183,8 +190,8 @@ export class MultiownerWallet implements Contract {
          return stack.readAddress();
     }
 
-    async getOrderEstimate(provider: ContractProvider, order: Order, expiration_date: bigint) {
-        const orderCell = order.type == "transfer" ? MultiownerWallet.packTransferRequest(order) : MultiownerWallet.packUpdateRequest(order);
+    async getOrderEstimate(provider: ContractProvider, order: Array<Action>, expiration_date: bigint) {
+        const orderCell = MultiownerWallet.packOrder(order);
         const { stack } = await provider.get('get_order_estimate', [{type: "cell", cell: orderCell}, {type: "int", value: expiration_date}]);
         return stack.readBigNumber();
     }

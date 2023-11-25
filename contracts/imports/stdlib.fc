@@ -331,6 +331,8 @@ slice slice_last(slice s, int len) asm "SDCUTLAST";
 ;;; Loads a dictionary `D` (HashMapE) from `slice` [s].
 ;;; (returns `null` if `nothing` constructor is used).
 (slice, cell) load_dict(slice s) asm( -> 1 0) "LDDICT";
+;; Alias for load_ref
+(slice, cell) load_nonempty_dict(slice s) asm( -> 1 0) "LDREF";
 
 ;;; Preloads a dictionary `D` from `slice` [s].
 cell preload_dict(slice s) asm "PLDDICT";
@@ -439,6 +441,8 @@ builder store_coins(builder b, int x) asm "STGRAMS";
 ;;; Stores dictionary `D` represented by `cell` [c] or `null` into `builder` [b].
 ;;; In other words, stores a `1`-bit and a reference to [c] if [c] is not `null` and `0`-bit otherwise.
 builder store_dict(builder b, cell c) asm(c b) "STDICT";
+;; alias for store_ref
+builder store_nonempty_dict(builder b, cell c) asm(c b) "STREF";
 
 ;;; Stores (Maybe ^Cell) to builder:
 ;;; if cell is null store 1 zero bit

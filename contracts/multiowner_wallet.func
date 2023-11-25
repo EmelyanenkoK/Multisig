@@ -45,7 +45,7 @@ cell order_body) impure {
                 send_raw_message(action~load_ref(), mode);
             } elseif (action_op == actions::update_multisig_params) {
                 threshold = action~load_index();
-                signers = action~load_dict();
+                signers = action~load_nonempty_dict();
                 signers_num = validate_dictionary_sequence(signers);
                 proposers = action~load_dict();
                 validate_dictionary_sequence(proposers);
@@ -65,7 +65,7 @@ cell order_body) impure {
         cell signers, int signers_num,
         cell proposers,
         cell modules, cell guard) = (ds~load_order_seqno(), ds~load_index(),
-        ds~load_dict(), ds~load_index(),
+        ds~load_nonempty_dict(), ds~load_index(),
         ds~load_dict(),
         ds~load_dict(), ds~load_maybe_ref());
     return (next_order_seqno, threshold,
@@ -79,7 +79,7 @@ cell signers, int signers_num,
 cell proposers,
 cell modules, cell guard) impure {
     begin_cell().store_order_seqno(next_order_seqno).store_index(threshold)
-    .store_dict(signers).store_index(signers_num)
+    .store_nonempty_dict(signers).store_index(signers_num)
     .store_dict(proposers)
     .store_dict(modules).store_maybe_ref(guard)
     .end_cell()
@@ -102,11 +102,11 @@ cell modules, cell guard) impure {
         int signer? = in_msg_body~load_bool();
         int index = in_msg_body~load_index();
         int expiration_date = in_msg_body~load_timestamp();
-        cell order_body = in_msg_body~load_dict();
-        (slice value, int found?) = (signer? ? signers : proposers).udict_get?(8, index);
+        cell order_body = in_msg_body~load_ref();
+        (slice expected_address, int found?) = (signer? ? signers : proposers).udict_get?(8, index);
         throw_unless(error::unauthorized_new_order, found?);
-        throw_unless(error::unauthorized_new_order, equal_slice_bits(sender, value));
-        throw_unless(error::unauthorized_new_order, ~ order_body.null?());
+        throw_unless(error::unauthorized_new_order, equal_slice_bits(sender, expected_address));
+
 
         int minimal_value = calculate_order_processing_cost(order_body, expiration_date - now());
         throw_unless(error::not_enough_ton, msg_value > minimal_value);
@@ -115,7 +115,7 @@ cell modules, cell guard) impure {
         slice order_address = calculate_address_by_state_init(BASECHAIN, state_init);
         builder init_body = begin_cell().store_body_header(op::init, 0)
         .store_index(threshold)
-        .store_dict(signers)
+        .store_nonempty_dict(signers)
         .store_index(signers_num)
         .store_timestamp(expiration_date)
         .store_ref(order_body)

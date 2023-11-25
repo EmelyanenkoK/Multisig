@@ -1,6 +1,6 @@
 import { Blockchain, SandboxContract, TreasuryContract, prettyLogTransactions } from '@ton/sandbox';
 import { beginCell, Cell, internal, toNano, Transaction, storeAccountStorage, storeMessage } from '@ton/core';
-import { MultiownerWallet, TransferRequest } from '../wrappers/MultiownerWallet';
+import { MultiownerWallet, TransferRequest, Action } from '../wrappers/MultiownerWallet';
 import { Order } from '../wrappers/Order';
 import '@ton/test-utils';
 import { compile } from '@ton/blueprint';
@@ -71,7 +71,8 @@ describe('FeeComputation', () => {
         const testAddr = randomAddress();
         const testMsg: TransferRequest = {type:"transfer", sendMode: 1, message: internal({to: testAddr, value: toNano('0.015'), body: beginCell().storeUint(12345, 32).endCell()})};
         const testMsg2: TransferRequest = {type:"transfer", sendMode: 1, message: internal({to: randomAddress(), value: toNano('0.017'), body: beginCell().storeUint(123425, 32).endCell()})};
-        const res = await multiownerWallet.sendNewOrder(deployer.getSender(), [testMsg, testMsg, testMsg, testMsg2], Math.floor(Date.now() / 1000 + 1000));
+        const orderList:Array<Action> = [testMsg, testMsg, testMsg, testMsg2];
+        const res = await multiownerWallet.sendNewOrder(deployer.getSender(), orderList, Math.floor(Date.now() / 1000 + 1000));
 
         /*
           tx0 : external -> treasury
@@ -139,6 +140,17 @@ describe('FeeComputation', () => {
         orderToMultiownerMessageOverhead: ${JSON.stringify(orderToMultiownerMessageOverhead)}
         `);
 
+        let orderCell = await MultiownerWallet.packOrder(orderList);
+
+        let timeSpan = 365 * 24 * 3600;
+        let orderEstimateOnContract = await multiownerWallet.getOrderEstimate(orderList, BigInt(Math.floor(Date.now() / 1000 + timeSpan)));
+        let gasEstimate = (MULTISIG_INIT_ORDER_GAS + ORDER_INIT_GAS + ORDER_EXECUTE_GAS + MULTISIG_EXECUTE_GAS) * 1000n;
+        let fwdEstimate = 2n * 1000000n +
+        BigInt((2 * orderBodyStats.bits + initOrderStateOverhead.bits + orderToMultiownerMessageOverhead.bits) +
+        (2 * orderBodyStats.cells + initOrderStateOverhead.cells + orderToMultiownerMessageOverhead.cells) * 100) * 1000n;
+        let storageEstimate = BigInt(Math.floor((orderBodyStats.bits +orderStateOverhead.bits + orderBodyStats.cells * 500 + orderStateOverhead.cells * 500) * timeSpan / 65536));
+        let manualFees = gasEstimate + fwdEstimate + storageEstimate;
+        console.log("orderEstimates", orderEstimateOnContract, manualFees);
 
     });
 

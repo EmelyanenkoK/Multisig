@@ -213,35 +213,6 @@ describe('MultiownerWallet', () => {
         });
     });
 
-    it('should not accept empty order for creation', async () => {
-        const initialSeqno = (await multiownerWallet.getMultiownerData()).nextOrderSeqno;
-        let   orderAddress = await multiownerWallet.getOrderAddress(initialSeqno);
-
-        const emptyOrderBody = beginCell().storeUint(Op.multiowner.new_order, 32)
-                                          .storeUint(1, 64)
-                                          .storeBit(true)
-                                          .storeUint(0, 8)
-                                          .storeUint(curTime() + 100, 48)
-                                          .storeDict(null)
-                               .endCell();
-        const res = await blockchain.sendMessage(internal({
-            from: deployer.address,
-            to: multiownerWallet.address,
-            value: toNano('1'),
-            body: emptyOrderBody
-        }));
-        expect(res.transactions).toHaveTransaction({
-            from: deployer.address,
-            to: multiownerWallet.address,
-            success: false,
-            aborted: true,
-            exitCode: Errors.multiowner.unauthorized_new_order
-        });
-        expect(res.transactions).not.toHaveTransaction({
-            from: multiownerWallet.address,
-            to: orderAddress
-        });
-    });
     it('deployer order state should match requested', async () => {
         // Let's deploy multisig with randomized parameters
 
@@ -357,6 +328,8 @@ describe('MultiownerWallet', () => {
         });
     });
 
+    /*
+    TODO
     it('order estimate should work', async () => {
         const testMsg: TransferRequest = {type: "transfer", sendMode: 1, message: internal_relaxed({to: randomAddress(), value: toNano('0.015'), body: beginCell().storeUint(12345, 32).endCell()})};
         const hrEst = await multiownerWallet.getOrderEstimate(testMsg, BigInt(curTime() + 3600));
@@ -364,7 +337,7 @@ describe('MultiownerWallet', () => {
         const yearEst = await multiownerWallet.getOrderEstimate(testMsg, BigInt(curTime() + 3600 * 24 * 365));
         console.log("Estimate for yearly storage:", yearEst);
         console.log("Storage delta:", yearEst - hrEst);
-    });
+    });*/
     it('should send new order with many actions in specified order', async () => {
         const testAddr1 = randomAddress();
         const testAddr2 = randomAddress();

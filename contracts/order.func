@@ -23,7 +23,7 @@
      int executed?, cell signers, int signers_num, 
      int approvals, int approvals_num, int expiration_date,
      cell order) =               (ds~load_index(),
-                                  ds~load_bool(), ds~load_dict(), ds~load_index(),
+                                  ds~load_bool(), ds~load_nonempty_dict(), ds~load_index(),
                                   ds~load_uint(1 << INDEX_SIZE), ds~load_index(), ds~load_timestamp(),
                                   ds~load_ref());
      return (multisig, order_seqno, threshold,
@@ -37,7 +37,7 @@
               int approvals, int approvals_num, int expiration_date,
               cell order) impure {
     begin_cell().store_slice(multisig).store_order_seqno(order_seqno).store_index(threshold)
-                .store_bool(executed?).store_dict(signers).store_index(signers_num)
+                .store_bool(executed?).store_nonempty_dict(signers).store_index(signers_num)
                 .store_uint(approvals, 1 << INDEX_SIZE)
                 .store_index(approvals_num).store_timestamp(expiration_date)
                 .store_ref(order)
@@ -64,7 +64,7 @@
         ;; Let's init
         threshold = in_msg_body~load_index();
         executed? = false;
-        signers = in_msg_body~load_dict();
+        signers = in_msg_body~load_nonempty_dict();
         signers_num = in_msg_body~load_index();
         approvals = 0;
         approvals_num = 0;
