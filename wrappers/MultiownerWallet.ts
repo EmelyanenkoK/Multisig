@@ -112,11 +112,22 @@ export class MultiownerWallet implements Contract {
                           .storeMaybeRef(update.guard)
                .endCell();
     }
-    static newOrderMessage(orders: Array<Order>,
+    static newOrderMessage(orders: Array<Order> | Cell,
                            expirationDate: number,
                            isSigner: boolean,
                            addrIdx: number,
                            query_id: number | bigint = 0) {
+
+       const msgBody = beginCell().storeUint(Op.multiowner.new_order, 32)
+                                  .storeUint(query_id, 64)
+                                  .storeBit(isSigner)
+                                  .storeUint(addrIdx, 8)
+                                  .storeUint(expirationDate, 48)
+
+        if(orders instanceof Cell) {
+            return msgBody.storeMaybeRef(orders).endCell();
+        }
+
         if(orders.length == 0) {
             throw new Error("Order list can't be empty!");
         }
@@ -130,17 +141,10 @@ export class MultiownerWallet implements Contract {
             const orderCell = order.type === "transfer" ? MultiownerWallet.packTransferRequest(order) : MultiownerWallet.packUpdateRequest(order);
             order_dict.set(i, orderCell);
         }
-
-        return beginCell().storeUint(Op.multiowner.new_order, 32)
-                          .storeUint(query_id, 64)
-                          .storeBit(isSigner)
-                          .storeUint(addrIdx, 8)
-                          .storeUint(expirationDate, 48)
-                          .storeDict(order_dict)
-               .endCell();
+        return msgBody.storeDict(order_dict).endCell();
     }
     async sendNewOrder(provider: ContractProvider, via: Sender,
-           orders: Array<Order>,
+           orders: Array<Order> | Cell,
            expirationDate: number, value: bigint = 200000000n, addrIdx?: number, isSigner?: boolean ) {
 
         if(this.configuration === undefined) {
