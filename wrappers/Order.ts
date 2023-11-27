@@ -115,14 +115,18 @@ export class Order implements Contract {
        const threshold = stack.readNumber();
        const executed = stack.readBoolean();
        const signers = cellToArray(stack.readCell());
-       const signers_num = stack.readBigNumber();
-       const approvals = Buffer.from(stack.readBigNumber().toString(16), 'hex');
+       const signers_num = stack.readNumber();
+       const approvals = stack.readBigNumber();
        const approvals_num = stack.readNumber();
        const expiration_date = stack.readBigNumber();
        const order = stack.readCell();
+       let approvalsArray: Array<boolean> = Array(signers_num);
+       for(let i = 0; i < signers_num; i++) {
+           approvalsArray[i] = Boolean((1n << BigInt(i)) & approvals);
+       }
        return {
               multisig, order_seqno, threshold, executed, signers, signers_num,
-                approvals: new BitString(approvals, 0, approvals_num), approvals_num, expiration_date, order
+                approvals: approvalsArray, approvals_num, _approvals: approvals, expiration_date, order
        };
     }
 }
