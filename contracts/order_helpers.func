@@ -62,7 +62,7 @@ const int EXECUTE_ORDER_CELL_OVERHEAD = 2;
 
 int flat_gas_wrapper(int flat_gas_limit, int flat_gas_price, int gas_price, int gas) {
     int flat_part = min(gas, flat_gas_limit);
-    return (flat_gas_price + (gas - flat_part) * gas_price) >> 16;
+    return (flat_gas_price + (gas - flat_part) * gas_price) / 65536;
 }
 
 int calculate_order_processing_cost(cell order_body, int duration) {
@@ -82,9 +82,13 @@ int calculate_order_processing_cost(cell order_body, int duration) {
            flat_gas_wrapper(flat_gas_limit, flat_gas_price, gas_price, ORDER_INIT_GAS) +
            flat_gas_wrapper(flat_gas_limit, flat_gas_price, gas_price, ORDER_EXECUTE_GAS) +
            flat_gas_wrapper(flat_gas_limit, flat_gas_price, gas_price, MULTISIG_EXECUTE_GAS) +
-           2 * lump_price +
-           muldiv((INIT_ORDER_BIT_OVERHEAD + EXECUTE_ORDER_BIT_OVERHEAD + 2 * order_bits), bit_price, 65536) +
-           muldiv((INIT_ORDER_CELL_OVERHEAD + EXECUTE_ORDER_CELL_OVERHEAD + 2 * order_cells), cell_price, 65536) +
-           muldiv(ORDER_STATE_BIT_OVERHEAD + order_bits, bit_price_ps * duration, 65536) +
-           muldiv(ORDER_STATE_CELL_OVERHEAD + order_cells, cell_price_ps * duration, 65536);
+           2 * lump_price + (((INIT_ORDER_BIT_OVERHEAD + EXECUTE_ORDER_BIT_OVERHEAD + 2 * order_bits) * bit_price) +
+           ((INIT_ORDER_CELL_OVERHEAD + EXECUTE_ORDER_CELL_OVERHEAD + 2 * order_cells) * cell_price)) ^/ 65536 +
+           (((ORDER_STATE_BIT_OVERHEAD + order_bits) * bit_price_ps * duration) +
+           ((ORDER_STATE_CELL_OVERHEAD + order_cells) * cell_price_ps * duration)) ^/ 65536;
+           ;; 2 * lump_price +
+           ;; muldiv((INIT_ORDER_BIT_OVERHEAD + EXECUTE_ORDER_BIT_OVERHEAD + 2 * order_bits), bit_price, 65536) +
+           ;; muldiv((INIT_ORDER_CELL_OVERHEAD + EXECUTE_ORDER_CELL_OVERHEAD + 2 * order_cells), cell_price, 65536) +
+           ;; muldiv(ORDER_STATE_BIT_OVERHEAD + order_bits, bit_price_ps * duration, 65536) +
+           ;; muldiv(ORDER_STATE_CELL_OVERHEAD + order_cells, cell_price_ps * duration, 65536);
 }
