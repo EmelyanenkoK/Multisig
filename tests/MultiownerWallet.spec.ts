@@ -215,7 +215,7 @@ describe('MultiownerWallet', () => {
             to: orderAddress
         });
     });
-    it('deployer order state should match requested', async () => {
+    it('deployed order state should match requested', async () => {
         // Let's deploy multisig with randomized parameters
 
         const signersNum = getRandomInt(10, 20);
