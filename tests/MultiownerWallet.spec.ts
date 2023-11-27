@@ -215,30 +215,6 @@ describe('MultiownerWallet', () => {
             to: orderAddress
         });
     });
-    // TODO delete
-    it.skip('should account for message value in transfer order', async () => {
-        // So we have message thar requests to transfer substantial amount of TON
-        const testMsg: TransferRequest = {type: "transfer", sendMode: 1, message: internal_relaxed({to: randomAddress(), value: toNano('100'), body: beginCell().storeUint(12345, 32).endCell()})};
-
-        const initialSeqno = (await multiownerWallet.getMultiownerData()).nextOrderSeqno;
-        let   orderAddress = await multiownerWallet.getOrderAddress(initialSeqno);
-
-        // We supply 100 times less, so expect failure
-        const res = await multiownerWallet.sendNewOrder(deployer.getSender(), [testMsg], curTime() + 1000, toNano('1'));
-
-        expect(res.transactions).toHaveTransaction({
-            from: deployer.address,
-            to: multiownerWallet.address,
-            aborted: true,
-            success: false
-        });
-        expect(res.transactions).not.toHaveTransaction({
-            from: multiownerWallet.address,
-            to: orderAddress,
-            deploy: true
-        });
-    });
-
     it('deployer order state should match requested', async () => {
         // Let's deploy multisig with randomized parameters
 
