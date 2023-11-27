@@ -93,7 +93,7 @@ For instance, prevent forbidden actions from execution.(?)
 ### Initialization
 
 - Order contract should only be able to initialize once.
-- Order contract should accept initialization messages from `multiowner` address.
+- Order contract should only accept initialization messages from `multiowner` address.
 - Execution threshold should be set according to init message.
 - Signers list should be set according to init message.
 - Expiration date should exceed current timestamp(Should not be expired at the time of receiving a message).
