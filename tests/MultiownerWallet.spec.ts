@@ -1,4 +1,4 @@
-import { Blockchain, SandboxContract, TreasuryContract, internal, prettyLogTransactions, BlockchainSnapshot } from '@ton/sandbox';
+import { Blockchain, SandboxContract, TreasuryContract, internal, prettyLogTransactions, BlockchainSnapshot, BlockchainTransaction } from '@ton/sandbox';
 import { beginCell, Cell, toNano, internal as internal_relaxed, Address, SendMode, Dictionary } from '@ton/core';
 import { MultiownerWallet, MultiownerWalletConfig, TransferRequest, UpdateRequest } from '../wrappers/MultiownerWallet';
 import { Order } from '../wrappers/Order';
@@ -62,7 +62,6 @@ describe('MultiownerWallet', () => {
         // blockchain and multiownerWallet are ready to use
     });
     it('only signers and proposers should be able to create order', async () => {
-        const testAddr = randomAddress();
         const nobody   = await blockchain.treasury('nobody');
 
 
@@ -80,6 +79,20 @@ describe('MultiownerWallet', () => {
                                                          0, // Address index
                                                         );
 
+        let assertUnauthorizedOrder= (txs: BlockchainTransaction[], from: Address) => {
+            expect(txs).toHaveTransaction({
+                from,
+                to: multiownerWallet.address,
+                success: false,
+                aborted: true,
+                exitCode: Errors.multiowner.unauthorized_new_order
+            });
+            expect(txs).not.toHaveTransaction({
+                from: multiownerWallet.address,
+                to: orderAddress,
+                deploy: true
+            });
+        }
         let nobodyMsgs = [msgSigner, msgProp];
         for (let nbMessage of nobodyMsgs) {
             let res = await blockchain.sendMessage(internal({
@@ -89,13 +102,7 @@ describe('MultiownerWallet', () => {
                 value: toNano('1')
             }));
 
-            expect(res.transactions).toHaveTransaction({
-                from: nobody.address,
-                to: multiownerWallet.address,
-                success: false,
-                aborted: true,
-                exitCode: Errors.multiowner.unauthorized_new_order
-            });
+            assertUnauthorizedOrder(res.transactions, nobody.address);
         }
 
         // Sending from valid proposer address should result in order creation
@@ -126,6 +133,22 @@ describe('MultiownerWallet', () => {
 
         // Order seqno should increase
         orderAddress = await multiownerWallet.getOrderAddress(initialSeqno + 1n);
+        // Sending signer message from proposer should fail
+        res = await blockchain.sendMessage(internal({
+            from: proposer.address,
+            to: multiownerWallet.address,
+            body: msgSigner,
+            value: toNano('1')
+        }));
+        assertUnauthorizedOrder(res.transactions, proposer.address);
+        // Proposer message from signer should fail as well
+        res = await blockchain.sendMessage(internal({
+            from: deployer.address,
+            to: multiownerWallet.address,
+            body: msgProp,
+            value: toNano('1')
+        }));
+        assertUnauthorizedOrder(res.transactions, deployer.address);
         // Now test signer
         res = await blockchain.sendMessage(internal({
             from: deployer.address,
