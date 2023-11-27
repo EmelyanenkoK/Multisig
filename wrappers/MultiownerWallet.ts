@@ -23,8 +23,8 @@ export type UpdateRequest   = {
     guard?: Cell
 };
 
-export type Order = TransferRequest | UpdateRequest;
 export type Action = TransferRequest | UpdateRequest;
+export type Order  = Array<Action>;
 
 function arrayToCell(arr: Array<Address>): Dictionary<number, Address> {
     let dict = Dictionary.empty(Dictionary.Keys.Uint(8), Dictionary.Values.Address());
@@ -128,7 +128,7 @@ export class MultiownerWallet implements Contract {
         return beginCell().storeDictDirect(order_dict).endCell();
     }
 
-    static newOrderMessage(orders: Array<Order> | Cell,
+    static newOrderMessage(actions: Order | Cell,
                            expirationDate: number,
                            isSigner: boolean,
                            addrIdx: number,
@@ -140,18 +140,18 @@ export class MultiownerWallet implements Contract {
                                   .storeUint(addrIdx, 8)
                                   .storeUint(expirationDate, 48)
 
-        if(orders instanceof Cell) {
-            return msgBody.storeMaybeRef(orders).endCell();
+        if(actions instanceof Cell) {
+            return msgBody.storeMaybeRef(actions).endCell();
         }
 
-        if(orders.length == 0) {
+        if(actions.length == 0) {
             throw new Error("Order list can't be empty!");
         }
-        let order_cell = MultiownerWallet.packOrder(orders);
+        let order_cell = MultiownerWallet.packOrder(actions);
         return msgBody.storeRef(order_cell).endCell();
     }
     async sendNewOrder(provider: ContractProvider, via: Sender,
-           orders: Array<Order> | Cell,
+           actions: Order | Cell,
            expirationDate: number, value: bigint = 200000000n, addrIdx?: number, isSigner?: boolean ) {
 
         if(this.configuration === undefined) {
@@ -179,7 +179,7 @@ export class MultiownerWallet implements Contract {
         await provider.internal(via, {
             sendMode: SendMode.PAY_GAS_SEPARATELY,
             value,
-            body: MultiownerWallet.newOrderMessage(orders, expirationDate, isSigner, addrIdx, 1)
+            body: MultiownerWallet.newOrderMessage(actions, expirationDate, isSigner, addrIdx, 1)
         });
 
         //console.log(await provider.get("get_order_address", []));
@@ -190,7 +190,7 @@ export class MultiownerWallet implements Contract {
          return stack.readAddress();
     }
 
-    async getOrderEstimate(provider: ContractProvider, order: Array<Action>, expiration_date: bigint) {
+    async getOrderEstimate(provider: ContractProvider, order: Order, expiration_date: bigint) {
         const orderCell = MultiownerWallet.packOrder(order);
         const { stack } = await provider.get('get_order_estimate', [{type: "cell", cell: orderCell}, {type: "int", value: expiration_date}]);
         return stack.readBigNumber();
