@@ -1,5 +1,5 @@
 import { Blockchain, SandboxContract, TreasuryContract, prettyLogTransactions, BlockchainTransaction } from '@ton/sandbox';
-import { beginCell, Cell, internal, toNano, Transaction, storeAccountStorage, storeMessage } from '@ton/core';
+import { beginCell, Cell, internal, toNano, Transaction, storeAccountStorage, storeMessage, Slice, Message, Dictionary } from '@ton/core';
 import { MultiownerWallet, TransferRequest, Action, MultiownerWalletConfig } from '../wrappers/MultiownerWallet';
 import { Order } from '../wrappers/Order';
 import { Op } from '../Constants';
@@ -13,6 +13,13 @@ export const computedGeneric = (trans:Transaction) => {
     if(trans.description.computePhase.type !== "vm")
         throw("Compute phase expected")
     return trans.description.computePhase;
+};
+export const storageGeneric = (trans:Transaction) => {
+    if(trans.description.type !== "generic")
+        throw("Expected generic transaction");
+    if(trans.description.computePhase.type !== "vm")
+        throw("Compute phase expected")
+    return trans.description.storagePhase;
 };
 
 export function collectCellStats(cell: Cell, visited:Array<string>, skipRoot: boolean = false): { bits: number, cells: number } {
@@ -33,9 +40,119 @@ export function collectCellStats(cell: Cell, visited:Array<string>, skipRoot: bo
     return { bits, cells };
 }
 
+
+type MsgPrices = ReturnType<typeof configParseMsgPrices>
+
+function computeDefaultForwardFee(msgPrices: MsgPrices) {
+    return msgPrices.lumpPrice - ((msgPrices.lumpPrice * msgPrices.firstFrac) >> BigInt(16));
+}
+function computeMessageForwardFees(msgPrices: MsgPrices, msg: Message) {
+    // let msg = loadMessageRelaxed(cell.beginParse());
+    let storageStats: { bits: number, cells: number } = { bits: 0, cells: 0 };
+
+    if( msg.info.type !== "internal") {
+        throw Error("Helper intended for internal messages");
+    }
+    const defaultFwd = computeDefaultForwardFee(msgPrices);
+    // If message forward fee matches default than msg cell is flat
+    let   skipRef    = msg.info.forwardFee == defaultFwd;
+    // Init
+    if (msg.init) {
+        if(msg.init.code) {
+            const code = collectCellStats(msg.init.code, []);
+            storageStats.bits += code.bits;
+            storageStats.cells += code.cells;
+        }
+        if(msg.init.data) {
+            const data = collectCellStats(msg.init.data, []);
+            storageStats.bits += data.bits;
+            storageStats.cells += data.cells;
+        }
+        // If message remaining fee exceeds fees fraction from  init data, than body is by ref
+        const tempFees = computeFwdFees(msgPrices, BigInt(storageStats.cells), BigInt(storageStats.bits));
+        const tempFrac = tempFees - ((tempFees * msgPrices.firstFrac) >> BigInt(16));
+        skipRef = tempFrac == msg.info.forwardFee
+    }
+
+    // Body
+    let bc = collectCellStats(msg.body,[], skipRef);
+    storageStats.bits  += bc.bits;
+    storageStats.cells += bc.cells;
+
+    // NOTE: Extra currencies are ignored for now
+    let fees = computeFwdFees(msgPrices, BigInt(storageStats.cells), BigInt(storageStats.bits));
+    let res  = shr16ceil((fees * msgPrices.firstFrac));
+    let remaining = fees - res;
+    /*
+    if(remaining != msg.info.forwardFee) {
+        console.log(msg);
+        console.log(res, remaining);
+        throw(new Error("Something went wrong in fee calcuation!"));
+    }
+    */
+    console.log("All went well");
+    return fees;
+}
+
+export const configParseMsgPrices = (sc: Slice) => {
+
+    let magic = sc.loadUint(8);
+
+    if(magic != 0xea) {
+        throw Error("Invalid message prices magic number!");
+    }
+    return {
+        lumpPrice:sc.loadUintBig(64),
+        bitPrice: sc.loadUintBig(64),
+        cellPrice: sc.loadUintBig(64),
+        ihrPriceFactor: sc.loadUintBig(32),
+        firstFrac: sc.loadUintBig(16),
+        nextFrac:  sc.loadUintBig(16)
+    };
+}
+
+export const getMsgPrices = (configRaw: Cell, workchain: 0 | -1 ) => {
+
+    const config = configRaw.beginParse().loadDictDirect(Dictionary.Keys.Int(32), Dictionary.Values.Cell());
+
+    const prices = config.get(25 + workchain);
+
+    if(prices === undefined) {
+        throw Error("No prices defined in config");
+    }
+
+    return configParseMsgPrices(prices.beginParse());
+}
+
+export function computeFwdFees(msgPrices: MsgPrices, cells: bigint, bits: bigint) {
+    return msgPrices.lumpPrice + (shr16ceil((msgPrices.bitPrice * bits)
+         + (msgPrices.cellPrice * cells))
+    );
+}
+
+
+
+function shr16ceil(src: bigint) {
+    let rem = src % BigInt(65536);
+    let res = src >> BigInt(16);
+    if (rem != BigInt(0)) {
+        res += BigInt(1);
+    }
+    return res;
+}
+function divideCeil(src: bigint, divisor: bigint) {
+    let rem = src % divisor;
+    let res = src / divisor;
+    if(rem != 0n) {
+        res += 1n;
+    }
+    return res;
+}
+
 describe('FeeComputation', () => {
     let multiowner_code: Cell;
     let order_code: Cell;
+    let msgPrices: MsgPrices;
 
     let curTime : () => number;
 
@@ -65,18 +182,22 @@ describe('FeeComputation', () => {
         };
 
         multiownerWallet = blockchain.openContract(MultiownerWallet.createFromConfig(config, multiowner_code));
+        msgPrices        = getMsgPrices(blockchain.config, 0);
 
         const deployResult = await multiownerWallet.sendDeploy(deployer.getSender(), toNano('0.05'));
 
         curTime = () => blockchain.now ?? Math.floor(Date.now() / 1000);
     });
 
-    it('should send new order', async () => {
+    it.only('should send new order', async () => {
         const testAddr = randomAddress();
         const testMsg: TransferRequest = {type:"transfer", sendMode: 1, message: internal({to: testAddr, value: toNano('0.015'), body: beginCell().storeUint(12345, 32).endCell()})};
         const testMsg2: TransferRequest = {type:"transfer", sendMode: 1, message: internal({to: randomAddress(), value: toNano('0.017'), body: beginCell().storeUint(123425, 32).endCell()})};
         const orderList:Array<Action> = [testMsg, testMsg, testMsg, testMsg2];
-        const res = await multiownerWallet.sendNewOrder(deployer.getSender(), orderList, Math.floor(Date.now() / 1000 + 1000));
+        let timeSpan  = 365 * 24 * 3600;
+        const expTime = Math.floor(Date.now() / 1000) + timeSpan;
+        let orderEstimateOnContract = await multiownerWallet.getOrderEstimate(orderList, BigInt(expTime));
+        const res = await multiownerWallet.sendNewOrder(deployer.getSender(), orderList, expTime);
 
         /*
           tx0 : external -> treasury
@@ -109,6 +230,7 @@ describe('FeeComputation', () => {
         console.log("initOrderStateOverhead", initOrderStateOverhead);
 
         const firstApproval = await order.sendApprove(deployer.getSender(), 0);
+        blockchain.now = expTime;
         const secondApproval = await order.sendApprove(second.getSender(), 1);
 
         expect(secondApproval.transactions).toHaveTransaction({
@@ -116,6 +238,7 @@ describe('FeeComputation', () => {
             to: multiownerWallet.address,
             success: true,
         });
+
 
         /*
           tx0 : external -> treasury
@@ -144,17 +267,25 @@ describe('FeeComputation', () => {
         orderToMultiownerMessageOverhead: ${JSON.stringify(orderToMultiownerMessageOverhead)}
         `);
 
-        let orderCell = await MultiownerWallet.packOrder(orderList);
+        let orderCell = MultiownerWallet.packOrder(orderList);
 
-        let timeSpan = 365 * 24 * 3600;
-        let orderEstimateOnContract = await multiownerWallet.getOrderEstimate(orderList, BigInt(Math.floor(Date.now() / 1000 + timeSpan)));
         let gasEstimate = (MULTISIG_INIT_ORDER_GAS + ORDER_INIT_GAS + ORDER_EXECUTE_GAS + MULTISIG_EXECUTE_GAS) * 1000n;
+        let actualFwd   = computeMessageForwardFees(msgPrices, secondApproval.transactions[3].inMessage!) 
+                          + computeMessageForwardFees(msgPrices, secondApproval.transactions[2].inMessage!)
+                          + computeMessageForwardFees(msgPrices, secondApproval.transactions[4].inMessage!);
+        console.log("Actual fwd:", actualFwd);
         let fwdEstimate = 2n * 1000000n +
         BigInt((2 * orderBodyStats.bits + initOrderStateOverhead.bits + orderToMultiownerMessageOverhead.bits) +
         (2 * orderBodyStats.cells + initOrderStateOverhead.cells + orderToMultiownerMessageOverhead.cells) * 100) * 1000n;
-        let storageEstimate = BigInt(Math.floor((orderBodyStats.bits +orderStateOverhead.bits + orderBodyStats.cells * 500 + orderStateOverhead.cells * 500) * timeSpan / 65536));
+        let storageEstimate = BigInt(Math.ceil((orderBodyStats.bits +orderStateOverhead.bits + orderBodyStats.cells * 500 + orderStateOverhead.cells * 500) * timeSpan / 65536));
+        console.log("fwdEstimate:", fwdEstimate);
+        const storagePhase  = storageGeneric(secondApproval.transactions[1]);
+        const actualStorage = storagePhase?.storageFeesCollected;
+        console.log("Storage estimates:", storageEstimate, actualStorage);
         let manualFees = gasEstimate + fwdEstimate + storageEstimate;
         console.log("orderEstimates", orderEstimateOnContract, manualFees);
+
+        console.log(secondApproval.transactions[2].description);
     });
     it('common cases gas fees multisig 7/10', async () => {
         const assertMultisig = async (threshold: number, total: number, txcount: number, lifetime: number, signer_creates: boolean) => {
@@ -224,6 +355,10 @@ describe('FeeComputation', () => {
                 to: testWallet.address,
                 success: true
             });
+            expect(res.transactions).not.toHaveTransaction({
+                actionResultCode: (x) => x! != 0
+            });
+
 
             return totalGas;
         };
