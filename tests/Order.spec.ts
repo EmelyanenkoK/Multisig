@@ -17,6 +17,7 @@ describe('Order', () => {
     let multisigWallet : SandboxContract<TreasuryContract>;
     let signers: Array<SandboxContract<TreasuryContract>>;
     let prevState: BlockchainSnapshot;
+    let prices : ReturnType<typeof getMsgPrices>;
     let getContractData : (addr: Address) => Promise<Cell>;
 
     beforeAll(async () => {
@@ -32,6 +33,8 @@ describe('Order', () => {
             multisig: multisigWallet.address,
             orderSeqno: 0
         }, code));
+
+        prices = getMsgPrices(blockchain.config, 0);
 
         getContractData = async (address: Address) => {
           const smc = await blockchain.getContract(address);
@@ -251,8 +254,6 @@ describe('Order', () => {
         const msgValue   = toNano('1');
         const balanceBefore = (await blockchain.getContract(orderContract.address)).balance;
         const res = await orderContract.sendApprove(lastSigner.getSender(), signerIdx, msgValue);
-
-        const prices = getMsgPrices(blockchain.config, 0);
 
         let approveTx = findTransactionRequired(res.transactions, {
             from: lastSigner.address,
