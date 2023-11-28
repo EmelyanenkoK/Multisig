@@ -715,5 +715,57 @@ describe('MultiownerWallet', () => {
             to: coolHacker.address
         });
     });
+    it('should handle more than 255 orders', async () => {
+
+        // Topping up
+        await blockchain.sendMessage(internal({
+            from: deployer.address,
+            to: multiownerWallet.address,
+            body: beginCell().storeUint(0, 32).storeUint(0, 64).endCell(),
+            value: toNano('1000')
+        }));
+        const orderCount = getRandomInt(260, 500);
+
+        console.log(`Charging ${orderCount} orders!`);
+        const order : Array<Action> = Array(orderCount);
+
+        for(let i = 0; i < orderCount; i++) {
+            order[i] = {
+                type: "transfer",
+                sendMode: 1,
+                message: internal_relaxed({
+                    to: deployer.address,
+                    value: toNano('0.01'),
+                    body: beginCell().storeUint(i, 32).endCell()
+                })
+            };
+        }
+
+        console.log("Fire!");
+        const res = await multiownerWallet.sendNewOrder(deployer.getSender(), order, curTime() + 100, toNano('100'));
+
+        expect(res.transactions).toHaveTransaction({
+            to: multiownerWallet.address,
+            op: Op.multiowner.execute,
+            success: true
+        });
+        expect(res.transactions).toHaveTransaction({
+            to: multiownerWallet.address,
+            op: Op.multiowner.execute_internal
+        });
+
+        let prevLt = 0n;
+        for(let i = 0; i < orderCount; i++) {
+            // console.log("Testing tx:", i);
+            const tx = findTransactionRequired(res.transactions, {
+                from: multiownerWallet.address,
+                to: deployer.address,
+                op: i,
+            });
+            // console.log("Got tx:i");
+            expect(tx.lt).toBeGreaterThan(prevLt); // Check tx order
+            prevLt = tx.lt;
+        }
+    });
 });
 // TODO EXPERIMENTAL AND MORE VERBOSE GUARANTEES CASES
