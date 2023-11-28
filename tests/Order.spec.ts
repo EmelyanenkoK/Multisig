@@ -3,9 +3,9 @@ import { Order, OrderConfig } from '../wrappers/Order';
 import { Op, Errors } from "../Constants";
 import '@ton/test-utils';
 import { compile } from '@ton/blueprint';
-import { randomAddress } from '@ton/test-utils';
+import { findTransactionRequired, randomAddress } from '@ton/test-utils';
 import { Blockchain, BlockchainSnapshot, SandboxContract, TreasuryContract } from '@ton/sandbox';
-import { differentAddress, getRandomInt } from './utils';
+import { differentAddress, getMsgPrices, getRandomInt, storageCollected, computedGeneric } from './utils';
 import { MultiownerWallet, TransferRequest } from '../wrappers/MultiownerWallet';
 
 describe('Order', () => {
@@ -248,31 +248,40 @@ describe('Order', () => {
         // Pick at random
         const signerIdx  = getRandomInt(threshold - 1, signers.length - 1);
         const lastSigner = signers[signerIdx];
-        const res = await orderContract.sendApprove(lastSigner.getSender(), signerIdx);
+        const msgValue   = toNano('1');
+        const balanceBefore = (await blockchain.getContract(orderContract.address)).balance;
+        const res = await orderContract.sendApprove(lastSigner.getSender(), signerIdx, msgValue);
 
-        expect(res.transactions).toHaveTransaction({
+        const prices = getMsgPrices(blockchain.config, 0);
+
+        let approveTx = findTransactionRequired(res.transactions, {
             from: lastSigner.address,
             on: orderContract.address,
             op: Op.order.approve,
             success: true,
             outMessagesCount: 2
         });
+
+        // Excess message
         expect(res.transactions).toHaveTransaction({
             from: orderContract.address,
             on: lastSigner.address,
             op: Op.order.expired,
+            value: msgValue - prices.lumpPrice - computedGeneric(approveTx).gasFees,
             success: true,
         });
+        // Return balance leftovers
         expect(res.transactions).toHaveTransaction({
             from: orderContract.address,
             on: multisigWallet.address,
             op: Op.order.expired,
+            value: balanceBefore - prices.lumpPrice - storageCollected(approveTx),
             success: true
         });
         expect(res.transactions).not.toHaveTransaction({
             from: orderContract.address,
             to: multisigWallet.address,
-            op: Op.multiowner.execute
+            op: Op.multiowner.execute,
         });
 
         dataAfter = await orderContract.getOrderData();
