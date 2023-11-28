@@ -1,13 +1,12 @@
 import { Blockchain, SandboxContract, TreasuryContract, internal, prettyLogTransactions, BlockchainSnapshot, BlockchainTransaction } from '@ton/sandbox';
 import { beginCell, Cell, toNano, internal as internal_relaxed, Address, SendMode, Dictionary } from '@ton/core';
-import { MultiownerWallet, MultiownerWalletConfig, TransferRequest, UpdateRequest } from '../wrappers/MultiownerWallet';
+import { Action, MultiownerWallet, MultiownerWalletConfig, TransferRequest, UpdateRequest } from '../wrappers/MultiownerWallet';
 import { Order } from '../wrappers/Order';
 import '@ton/test-utils';
 import { compile } from '@ton/blueprint';
-import { randomAddress } from '@ton/test-utils';
+import { randomAddress, findTransactionRequired } from '@ton/test-utils';
 import { Op, Errors } from '../Constants';
-import { getRandomInt, findTransaction, differentAddress} from './utils';
-import { abort } from 'process';
+import { getRandomInt, differentAddress} from './utils';
 
 describe('MultiownerWallet', () => {
     let code: Cell;
@@ -360,14 +359,13 @@ describe('MultiownerWallet', () => {
             success: true
         });
 
-        let order1Tx = findTransaction(res.transactions, {
+        let order1Tx = findTransactionRequired(res.transactions, {
             from: multiownerWallet.address,
             to: testAddr1,
             value: toNano('0.015'),
             body: beginCell().storeUint(12345, 32).endCell(),
         });
-        expect(order1Tx).not.toBeUndefined();
-        let order2Tx = findTransaction(res.transactions, {
+        let order2Tx = findTransactionRequired(res.transactions, {
             from: multiownerWallet.address,
             to: testAddr2,
             value: toNano('0.016'),
@@ -380,20 +378,18 @@ describe('MultiownerWallet', () => {
 
         res = await multiownerWallet.sendNewOrder(deployer.getSender(), [testMsg2, testMsg1], Math.floor(Date.now() / 1000 + 1000));
 
-        order1Tx = findTransaction(res.transactions, {
+        order1Tx = findTransactionRequired(res.transactions, {
             from: multiownerWallet.address,
             to: testAddr1,
             value: toNano('0.015'),
             body: beginCell().storeUint(12345, 32).endCell(),
         });
-        expect(order1Tx).not.toBeUndefined();
-        order2Tx = findTransaction(res.transactions, {
+        order2Tx = findTransactionRequired(res.transactions, {
             from: multiownerWallet.address,
             to: testAddr2,
             value: toNano('0.016'),
             body: beginCell().storeUint(12346, 32).endCell(),
         });
-        expect(order2Tx).not.toBeUndefined();
         // Now second comes first
         expect(order2Tx!.lt).toBeLessThan(order1Tx!.lt);
     });
