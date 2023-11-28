@@ -290,6 +290,55 @@ describe('Order', () => {
         expect(dataAfter.approvals_num).toEqual(threshold - 1);
         expect(dataAfter.executed).toBe(false);
     });
+    it('should reject execution when executed once', async () => {
+        const msgVal = toNano('1');
+        for (let i = 0; i < threshold; i++) {
+            const res = await orderContract.sendApprove(signers[i].getSender(), i, msgVal);
+            expect(res.transactions).toHaveTransaction({
+                from: signers[i].address,
+                to: orderContract.address,
+                success: true
+            });
+            // Meh! TS made me do dat!
+            if(i == threshold - 1) {
+                expect(res.transactions).toHaveTransaction({
+                    from: orderContract.address,
+                    to: multisigWallet.address,
+                    op: Op.multiowner.execute
+                });
+            }
+        }
+
+        const dataAfter = await orderContract.getOrderData();
+        expect(dataAfter.executed).toBe(true);
+
+        const lateSigner = signers[threshold];
+        expect(dataAfter.approvals[threshold]).toBe(false); // Make sure we're not failing due to occupied approval index
+
+        const res = await orderContract.sendApprove(lateSigner.getSender(), threshold, msgVal);
+
+        const approveTx = findTransactionRequired(res.transactions, {
+                from: lateSigner.address,
+                on: orderContract.address,
+                op: Op.order.approve,
+                success: true,
+                outMessagesCount: 1
+        });
+        // Return excess
+        expect(res.transactions).toHaveTransaction({
+            from: orderContract.address,
+            on: lateSigner.address,
+            op: Op.order.already_executed,
+            value: msgVal - prices.lumpPrice - computedGeneric(approveTx).gasFees,
+            success: true
+        });
+        // No execution message
+        expect(res.transactions).not.toHaveTransaction({
+            from: orderContract.address,
+            to: multisigWallet.address,
+            op: Op.multiowner.execute
+        });
+    });
     it('should handle 255 signers', async () => {
         const jumboSigners = await blockchain.createWallets(255);
         const jumboOrder   = blockchain.openContract(Order.createFromConfig({

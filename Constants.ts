@@ -7,6 +7,7 @@ export abstract class Op {
     static readonly order = {
         approve: 0x8,
         expired: 0x6,
+        already_executed : 0x7,
         approved: 0x9,
         init: 0x5
     }
