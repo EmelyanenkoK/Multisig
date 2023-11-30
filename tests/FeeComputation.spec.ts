@@ -27,7 +27,8 @@ export function collectCellStats(cell: Cell, visited:Array<string>, skipRoot: bo
     let cells = skipRoot ? 0 : 1;
     let hash = cell.hash().toString();
     if (visited.includes(hash)) {
-        return { bits, cells };
+        // We should not account for current cell data if visited
+        return { bits: 0, cells: 0};
     }
     else {
         visited.push(hash);
