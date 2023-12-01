@@ -188,7 +188,6 @@ describe('Order', () => {
         }
     });
 
-
     it('should approve order with comment', async () => {
         let   signerIdx  = 0;
         let signer     = signers[signerIdx];
@@ -284,7 +283,44 @@ describe('Order', () => {
         expect(dataAfter._approvals).toEqual(dataBefore._approvals);
 
     });
+    it('should accept approval only from signers', async () => {
+        let signerIdx  = getRandomInt(0, signers.length - 1);
 
+        const rndSigner = signers[signerIdx];
+        const notSigner = differentAddress(signers[signerIdx].address);
+
+        let dataBefore = await getContractData(orderContract.address);
+
+        // Testing not valid signer address, but valid signer index
+        let res = await orderContract.sendApprove(blockchain.sender(notSigner), signerIdx);
+        expect(res.transactions).toHaveTransaction({
+            from: notSigner,
+            to: orderContract.address,
+            op: Op.order.approve,
+            aborted: true,
+            success: false,
+            exitCode: Errors.order.unauthorized_sign
+        });
+
+        expect(await getContractData(orderContract.address)).toEqualCell(dataBefore);
+
+        // Now let's pick valid signer address but index from another valid signer
+
+        signerIdx = (signerIdx + 1) % signers.length;
+
+        res = await orderContract.sendApprove(rndSigner.getSender(), signerIdx);
+
+        expect(res.transactions).toHaveTransaction({
+            from: rndSigner.address,
+            to: orderContract.address,
+            op: Op.order.approve,
+            aborted: true,
+            success: false,
+            exitCode: Errors.order.unauthorized_sign
+        });
+
+        expect(await getContractData(orderContract.address)).toEqualCell(dataBefore);
+    });
     it('should reject approval if already approved', async () => {
         const signersNum = signers.length;
         // Pick random starting point
