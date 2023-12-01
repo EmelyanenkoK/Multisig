@@ -4,7 +4,7 @@ import { Op, Errors } from "../Constants";
 import '@ton/test-utils';
 import { compile } from '@ton/blueprint';
 import { findTransactionRequired, randomAddress } from '@ton/test-utils';
-import { Blockchain, BlockchainSnapshot, SandboxContract, TreasuryContract } from '@ton/sandbox';
+import { Blockchain, BlockchainSnapshot, SandboxContract, TreasuryContract, internal } from '@ton/sandbox';
 import { differentAddress, getMsgPrices, getRandomInt, storageCollected, computedGeneric } from './utils';
 import { MultiownerWallet, TransferRequest } from '../wrappers/MultiownerWallet';
 
@@ -16,6 +16,7 @@ describe('Order', () => {
     let mockOrder: Cell;
     let multisigWallet : SandboxContract<TreasuryContract>;
     let signers: Array<SandboxContract<TreasuryContract>>;
+    let notOwner: SandboxContract<TreasuryContract>;
     let prevState: BlockchainSnapshot;
     let prices : ReturnType<typeof getMsgPrices>;
     let getContractData : (addr: Address) => Promise<Cell>;
@@ -24,6 +25,7 @@ describe('Order', () => {
         code =await compile('Order');
         blockchain = await Blockchain.create();
         multisigWallet = await blockchain.treasury('multisig');
+        notOwner = await blockchain.treasury('notOwner');
         const testAddr = randomAddress();
         const testMsg : TransferRequest = { type: "transfer", sendMode: 1, message: internal_relaxed({to: testAddr, value: toNano('0.015'), body: beginCell().storeUint(12345, 32).endCell()})};
 
@@ -186,6 +188,103 @@ describe('Order', () => {
         }
     });
 
+
+    it('should approve order with comment', async () => {
+        let   signerIdx  = 0;
+        let signer     = signers[signerIdx];
+        let dataBefore = await orderContract.getOrderData();
+        let res = await blockchain.sendMessage(internal({
+                from: signer.address,
+                to: orderContract.address,
+                value: toNano('1'),
+                body: beginCell().storeUint(0, 32).storeStringTail("approve").endCell()
+        }));
+        expect(res.transactions).toHaveTransaction({
+            from: orderContract.address,
+            to: signer.address,
+            op: Op.order.approved,
+            success: true
+        });
+        let dataAfter  = await orderContract.getOrderData();
+
+        expect(dataAfter.approvals_num).toEqual(dataBefore.approvals_num + 1);
+        expect(dataAfter._approvals).toBeGreaterThan(dataBefore._approvals);
+        expect(dataAfter.approvals[signerIdx]).toBe(true);
+
+        dataBefore = dataAfter;
+
+        // Repeat, but with "tricky comment"
+        signerIdx  = 1;
+        signer     = signers[signerIdx];
+
+        res = await blockchain.sendMessage(internal({
+                from: signer.address,
+                to: orderContract.address,
+                value: toNano('1'),
+                body: beginCell().storeUint(0, 32).storeStringTail("approve")
+                          .storeRef(beginCell().storeStringTail(" not given").endCell())
+                          .endCell()
+        }));
+
+        expect(res.transactions).toHaveTransaction({
+            from: signer.address,
+            to: orderContract.address,
+            success: false
+        });
+        dataAfter  = await orderContract.getOrderData();
+
+        // All should stay same
+        expect(dataAfter.approvals_num).toEqual(dataBefore.approvals_num);
+        expect(dataAfter._approvals).toEqual(dataBefore._approvals);
+
+        // Repeat, but with other "tricky comment"
+        signerIdx  = 1;
+        signer     = signers[signerIdx];
+        res = await blockchain.sendMessage(internal({
+                from: signer.address,
+                to: orderContract.address,
+                value: toNano('1'),
+                body: beginCell().storeUint(0, 32).storeStringTail("approve not given").endCell()
+        }));
+
+        expect(res.transactions).toHaveTransaction({
+            from: signer.address,
+            to: orderContract.address,
+            success: false
+        });
+        dataAfter  = await orderContract.getOrderData();
+
+        // All should stay same
+        expect(dataAfter.approvals_num).toEqual(dataBefore.approvals_num);
+        expect(dataAfter._approvals).toEqual(dataBefore._approvals);
+    });
+
+
+    it('should reject order with comment from not signer', async () => {
+        let   signerIdx  = 0;
+        let signer     = notOwner;
+        let dataBefore = await orderContract.getOrderData();
+        let res = await blockchain.sendMessage(internal({
+                from: signer.address,
+                to: orderContract.address,
+                value: toNano('1'),
+                body: beginCell().storeUint(0, 32).storeStringTail("approve").endCell()
+        }));
+
+        expect(res.transactions).toHaveTransaction({
+            from: signer.address,
+            to: orderContract.address,
+            success: false,
+            exitCode: Errors.order.unauthorized_sign
+        });
+        let dataAfter  = await orderContract.getOrderData();
+
+        // All should stay same
+        expect(dataAfter.approvals_num).toEqual(dataBefore.approvals_num);
+        expect(dataAfter._approvals).toEqual(dataBefore._approvals);
+
+    });
+
     it('should reject approval if already approved', async () => {
         const signersNum = signers.length;
         // Pick random starting point
@@ -339,6 +438,7 @@ describe('Order', () => {
             op: Op.multiowner.execute
         });
     });
+
     it('should handle 255 signers', async () => {
         const jumboSigners = await blockchain.createWallets(255);
         const jumboOrder   = blockchain.openContract(Order.createFromConfig({
@@ -377,4 +477,5 @@ describe('Order', () => {
             op: Op.multiowner.execute,
         });
     });
+
 });

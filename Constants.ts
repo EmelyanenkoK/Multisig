@@ -29,7 +29,8 @@ export abstract class Errors {
     static readonly order = {
         unauthorized_init : 104,
         already_approved : 107,
-        already_inited : 105
+        already_inited : 105,
+        unauthorized_sign : 106
     }
 };
 
