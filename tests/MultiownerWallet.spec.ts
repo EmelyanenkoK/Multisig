@@ -1,13 +1,12 @@
-import { Blockchain, SandboxContract, TreasuryContract, internal, prettyLogTransactions, BlockchainSnapshot } from '@ton/sandbox';
+import { Blockchain, SandboxContract, TreasuryContract, internal, prettyLogTransactions, BlockchainSnapshot, BlockchainTransaction } from '@ton/sandbox';
 import { beginCell, Cell, toNano, internal as internal_relaxed, Address, SendMode, Dictionary } from '@ton/core';
-import { MultiownerWallet, MultiownerWalletConfig, TransferRequest, UpdateRequest } from '../wrappers/MultiownerWallet';
+import { Action, MultiownerWallet, MultiownerWalletConfig, TransferRequest, UpdateRequest } from '../wrappers/MultiownerWallet';
 import { Order } from '../wrappers/Order';
 import '@ton/test-utils';
 import { compile } from '@ton/blueprint';
-import { randomAddress } from '@ton/test-utils';
+import { randomAddress, findTransactionRequired } from '@ton/test-utils';
 import { Op, Errors } from '../Constants';
-import { getRandomInt, findTransaction, differentAddress} from './utils';
-import { abort } from 'process';
+import { getRandomInt, differentAddress} from './utils';
 
 describe('MultiownerWallet', () => {
     let code: Cell;
@@ -62,7 +61,6 @@ describe('MultiownerWallet', () => {
         // blockchain and multiownerWallet are ready to use
     });
     it('only signers and proposers should be able to create order', async () => {
-        const testAddr = randomAddress();
         const nobody   = await blockchain.treasury('nobody');
 
 
@@ -80,6 +78,20 @@ describe('MultiownerWallet', () => {
                                                          0, // Address index
                                                         );
 
+        let assertUnauthorizedOrder= (txs: BlockchainTransaction[], from: Address) => {
+            expect(txs).toHaveTransaction({
+                from,
+                to: multiownerWallet.address,
+                success: false,
+                aborted: true,
+                exitCode: Errors.multiowner.unauthorized_new_order
+            });
+            expect(txs).not.toHaveTransaction({
+                from: multiownerWallet.address,
+                to: orderAddress,
+                deploy: true
+            });
+        }
         let nobodyMsgs = [msgSigner, msgProp];
         for (let nbMessage of nobodyMsgs) {
             let res = await blockchain.sendMessage(internal({
@@ -89,13 +101,7 @@ describe('MultiownerWallet', () => {
                 value: toNano('1')
             }));
 
-            expect(res.transactions).toHaveTransaction({
-                from: nobody.address,
-                to: multiownerWallet.address,
-                success: false,
-                aborted: true,
-                exitCode: Errors.multiowner.unauthorized_new_order
-            });
+            assertUnauthorizedOrder(res.transactions, nobody.address);
         }
 
         // Sending from valid proposer address should result in order creation
@@ -126,6 +132,22 @@ describe('MultiownerWallet', () => {
 
         // Order seqno should increase
         orderAddress = await multiownerWallet.getOrderAddress(initialSeqno + 1n);
+        // Sending signer message from proposer should fail
+        res = await blockchain.sendMessage(internal({
+            from: proposer.address,
+            to: multiownerWallet.address,
+            body: msgSigner,
+            value: toNano('1')
+        }));
+        assertUnauthorizedOrder(res.transactions, proposer.address);
+        // Proposer message from signer should fail as well
+        res = await blockchain.sendMessage(internal({
+            from: deployer.address,
+            to: multiownerWallet.address,
+            body: msgProp,
+            value: toNano('1')
+        }));
+        assertUnauthorizedOrder(res.transactions, deployer.address);
         // Now test signer
         res = await blockchain.sendMessage(internal({
             from: deployer.address,
@@ -192,31 +214,7 @@ describe('MultiownerWallet', () => {
             to: orderAddress
         });
     });
-    // TODO delete
-    it.skip('should account for message value in transfer order', async () => {
-        // So we have message thar requests to transfer substantial amount of TON
-        const testMsg: TransferRequest = {type: "transfer", sendMode: 1, message: internal_relaxed({to: randomAddress(), value: toNano('100'), body: beginCell().storeUint(12345, 32).endCell()})};
-
-        const initialSeqno = (await multiownerWallet.getMultiownerData()).nextOrderSeqno;
-        let   orderAddress = await multiownerWallet.getOrderAddress(initialSeqno);
-
-        // We supply 100 times less, so expect failure
-        const res = await multiownerWallet.sendNewOrder(deployer.getSender(), [testMsg], curTime() + 1000, toNano('1'));
-
-        expect(res.transactions).toHaveTransaction({
-            from: deployer.address,
-            to: multiownerWallet.address,
-            aborted: true,
-            success: false
-        });
-        expect(res.transactions).not.toHaveTransaction({
-            from: multiownerWallet.address,
-            to: orderAddress,
-            deploy: true
-        });
-    });
-
-    it('deployer order state should match requested', async () => {
+    it('deployed order state should match requested', async () => {
         // Let's deploy multisig with randomized parameters
 
         const signersNum = getRandomInt(10, 20);
@@ -361,14 +359,13 @@ describe('MultiownerWallet', () => {
             success: true
         });
 
-        let order1Tx = findTransaction(res.transactions, {
+        let order1Tx = findTransactionRequired(res.transactions, {
             from: multiownerWallet.address,
             to: testAddr1,
             value: toNano('0.015'),
             body: beginCell().storeUint(12345, 32).endCell(),
         });
-        expect(order1Tx).not.toBeUndefined();
-        let order2Tx = findTransaction(res.transactions, {
+        let order2Tx = findTransactionRequired(res.transactions, {
             from: multiownerWallet.address,
             to: testAddr2,
             value: toNano('0.016'),
@@ -381,20 +378,18 @@ describe('MultiownerWallet', () => {
 
         res = await multiownerWallet.sendNewOrder(deployer.getSender(), [testMsg2, testMsg1], Math.floor(Date.now() / 1000 + 1000));
 
-        order1Tx = findTransaction(res.transactions, {
+        order1Tx = findTransactionRequired(res.transactions, {
             from: multiownerWallet.address,
             to: testAddr1,
             value: toNano('0.015'),
             body: beginCell().storeUint(12345, 32).endCell(),
         });
-        expect(order1Tx).not.toBeUndefined();
-        order2Tx = findTransaction(res.transactions, {
+        order2Tx = findTransactionRequired(res.transactions, {
             from: multiownerWallet.address,
             to: testAddr2,
             value: toNano('0.016'),
             body: beginCell().storeUint(12346, 32).endCell(),
         });
-        expect(order2Tx).not.toBeUndefined();
         // Now second comes first
         expect(order2Tx!.lt).toBeLessThan(order1Tx!.lt);
     });
@@ -719,6 +714,58 @@ describe('MultiownerWallet', () => {
             from: multiownerWallet.address,
             to: coolHacker.address
         });
+    });
+    it('should handle more than 255 orders', async () => {
+
+        // Topping up
+        await blockchain.sendMessage(internal({
+            from: deployer.address,
+            to: multiownerWallet.address,
+            body: beginCell().storeUint(0, 32).storeUint(0, 64).endCell(),
+            value: toNano('1000')
+        }));
+        const orderCount = getRandomInt(260, 500);
+
+        console.log(`Charging ${orderCount} orders!`);
+        const order : Array<Action> = Array(orderCount);
+
+        for(let i = 0; i < orderCount; i++) {
+            order[i] = {
+                type: "transfer",
+                sendMode: 1,
+                message: internal_relaxed({
+                    to: deployer.address,
+                    value: toNano('0.01'),
+                    body: beginCell().storeUint(i, 32).endCell()
+                })
+            };
+        }
+
+        console.log("Fire!");
+        const res = await multiownerWallet.sendNewOrder(deployer.getSender(), order, curTime() + 100, toNano('100'));
+
+        expect(res.transactions).toHaveTransaction({
+            to: multiownerWallet.address,
+            op: Op.multiowner.execute,
+            success: true
+        });
+        expect(res.transactions).toHaveTransaction({
+            to: multiownerWallet.address,
+            op: Op.multiowner.execute_internal
+        });
+
+        let prevLt = 0n;
+        for(let i = 0; i < orderCount; i++) {
+            // console.log("Testing tx:", i);
+            const tx = findTransactionRequired(res.transactions, {
+                from: multiownerWallet.address,
+                to: deployer.address,
+                op: i,
+            });
+            // console.log("Got tx:i");
+            expect(tx.lt).toBeGreaterThan(prevLt); // Check tx order
+            prevLt = tx.lt;
+        }
     });
 });
 // TODO EXPERIMENTAL AND MORE VERBOSE GUARANTEES CASES

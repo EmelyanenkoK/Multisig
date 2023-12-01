@@ -6,6 +6,8 @@ export abstract class Op {
     }
     static readonly order = {
         approve: 0x8,
+        expired: 0x6,
+        already_executed : 0x7,
         approved: 0x9,
         init: 0x5
     }
@@ -23,6 +25,11 @@ export abstract class Errors {
         singers_outdated : 102,
         invalid_dictionary_sequence: 103,
         expired: 111
+    }
+    static readonly order = {
+        unauthorized_init : 104,
+        already_approved : 107,
+        already_inited : 105
     }
 };
 

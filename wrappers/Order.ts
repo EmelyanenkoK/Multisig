@@ -46,6 +46,30 @@ export class Order implements Contract {
         return new Order(contractAddress(workchain, init), init, config);
     }
 
+    static initMessage (signers: Array<Address>,
+                        expiration_date: number,
+                        order: Cell,
+                        threshold: number = 1,
+                        approve_on_init: boolean = false,
+                        signer_idx: number = 0,
+                        query_id : number | bigint = 0)   {
+
+       const msgBody = beginCell()
+                .storeUint(Op.order.init, 32)
+                .storeUint(query_id, 64)
+                .storeUint(threshold, 8)
+                .storeRef(beginCell().storeDictDirect(arrayToCell(signers)))
+                .storeUint(signers.length, 8)
+                .storeUint(expiration_date, 48)
+                .storeRef(order)
+                .storeBit(approve_on_init);
+
+       if(approve_on_init) {
+           msgBody.storeUint(signer_idx, 8);
+       }
+
+       return msgBody.endCell();
+    }
     async sendDeploy(provider: ContractProvider,
                      via: Sender,
                      value: bigint,
@@ -56,25 +80,12 @@ export class Order implements Contract {
                      approve_on_init: boolean = false,
                      signer_idx: number = 0,
                      query_id : number | bigint = 0) {
-       const msgBody = beginCell()
-                        .storeUint(Op.order.init, 32)
-                        .storeUint(query_id, 64)
-                        .storeUint(threshold, 8)
-                        .storeRef(beginCell().storeDictDirect(arrayToCell(signers)))
-                        .storeUint(signers.length, 8)
-                        .storeUint(expiration_date, 48)
-                        .storeRef(order)
-                        .storeBit(approve_on_init);
-
-       if(approve_on_init) {
-           msgBody.storeUint(signer_idx, 8)
-       }
 
 
        await provider.internal(via, {
            value,
            sendMode: SendMode.PAY_GAS_SEPARATELY,
-           body: msgBody.endCell()
+           body: Order.initMessage(signers, expiration_date, order, threshold, approve_on_init, signer_idx, query_id)
        });
     }
 
@@ -104,14 +115,18 @@ export class Order implements Contract {
        const threshold = stack.readNumber();
        const executed = stack.readBoolean();
        const signers = cellToArray(stack.readCell());
-       const signers_num = stack.readBigNumber();
-       const approvals = Buffer.from(stack.readBigNumber().toString(16), 'hex');
+       const signers_num = stack.readNumber();
+       const approvals = stack.readBigNumber();
        const approvals_num = stack.readNumber();
        const expiration_date = stack.readBigNumber();
        const order = stack.readCell();
+       let approvalsArray: Array<boolean> = Array(signers_num);
+       for(let i = 0; i < signers_num; i++) {
+           approvalsArray[i] = Boolean((1n << BigInt(i)) & approvals);
+       }
        return {
               multisig, order_seqno, threshold, executed, signers, signers_num,
-                approvals: new BitString(approvals, 0, approvals_num), approvals_num, expiration_date, order
+                approvals: approvalsArray, approvals_num, _approvals: approvals, expiration_date, order
        };
     }
 }
