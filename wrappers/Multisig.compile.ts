@@ -6,5 +6,5 @@ export const compile: CompilerConfig = {
     preCompileHook: async () => {
         await compileFunc('Order');
     },
-    targets: ['contracts/multiowner_wallet.func'],
+    targets: ['contracts/multisig.func'],
 };

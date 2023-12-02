@@ -6,7 +6,7 @@ import { compile } from '@ton/blueprint';
 import { findTransactionRequired, randomAddress } from '@ton/test-utils';
 import { Blockchain, BlockchainSnapshot, SandboxContract, TreasuryContract, internal } from '@ton/sandbox';
 import { differentAddress, getMsgPrices, getRandomInt, storageCollected, computedGeneric } from './utils';
-import { MultiownerWallet, TransferRequest } from '../wrappers/MultiownerWallet';
+import { Multisig, TransferRequest } from '../wrappers/Multisig';
 
 describe('Order', () => {
     let code: Cell;
@@ -14,9 +14,9 @@ describe('Order', () => {
     let threshold: number;
     let orderContract : SandboxContract<Order>;
     let mockOrder: Cell;
-    let multisigWallet : SandboxContract<TreasuryContract>;
+    let multisig : SandboxContract<TreasuryContract>;
     let signers: Array<SandboxContract<TreasuryContract>>;
-    let notOwner: SandboxContract<TreasuryContract>;
+    let notSigner: SandboxContract<TreasuryContract>;
     let prevState: BlockchainSnapshot;
     let prices : ReturnType<typeof getMsgPrices>;
     let getContractData : (addr: Address) => Promise<Cell>;
@@ -24,15 +24,15 @@ describe('Order', () => {
     beforeAll(async () => {
         code =await compile('Order');
         blockchain = await Blockchain.create();
-        multisigWallet = await blockchain.treasury('multisig');
-        notOwner = await blockchain.treasury('notOwner');
+        multisig = await blockchain.treasury('multisig');
+        notSigner = await blockchain.treasury('notSigner');
         const testAddr = randomAddress();
         const testMsg : TransferRequest = { type: "transfer", sendMode: 1, message: internal_relaxed({to: testAddr, value: toNano('0.015'), body: beginCell().storeUint(12345, 32).endCell()})};
 
-        mockOrder = MultiownerWallet.packOrder([testMsg]);
+        mockOrder = Multisig.packOrder([testMsg]);
 
         orderContract = blockchain.openContract(Order.createFromConfig({
-            multisig: multisigWallet.address,
+            multisig: multisig.address,
             orderSeqno: 0
         }, code));
 
@@ -55,14 +55,14 @@ describe('Order', () => {
 
         threshold = 5
         signers = await blockchain.createWallets(threshold * 2);
-        const res = await orderContract.sendDeploy(multisigWallet.getSender(), toNano('1'), signers.map((s) => s.address), expDate, mockOrder, threshold);
+        const res = await orderContract.sendDeploy(multisig.getSender(), toNano('1'), signers.map((s) => s.address), expDate, mockOrder, threshold);
         expect(res.transactions).toHaveTransaction({deploy: true, success: true});
 
         const stringify = (addr: Address) => addr.toString();
         const orderData = await orderContract.getOrderData();
 
-        // Overlaps with "deployed order state should match requested" case from MultiownerWallet.spec.ts but won't hurt
-        expect(orderData.multisig).toEqualAddress(multisigWallet.address);
+        // Overlaps with "deployed order state should match requested" case from Multisig.spec.ts but won't hurt
+        expect(orderData.multisig).toEqualAddress(multisig.address);
         expect(orderData.order_seqno).toBe(0n);
         expect(orderData.expiration_date).toEqual(BigInt(expDate));
         expect(orderData.approvals_num).toBe(0); // Number of approvals
@@ -82,11 +82,11 @@ describe('Order', () => {
         // Happens in beforeAll clause
     });
 
-    it('should only accept init message from multisig wallet', async () => {
-        const testAddr = differentAddress(multisigWallet.address);
+    it('should only accept init message from multisig', async () => {
+        const testAddr = differentAddress(multisig.address);
 
         const newOrder = blockchain.openContract(Order.createFromConfig({
-            multisig: multisigWallet.address,
+            multisig: multisig.address,
             orderSeqno: 1 // Next
         }, code));
 
@@ -105,10 +105,10 @@ describe('Order', () => {
 
         // Now retry with legit multisig should succeed
 
-        res = await newOrder.sendDeploy(multisigWallet.getSender(), toNano('1'), signers.map(s => s.address), expDate, mockOrder, threshold);
+        res = await newOrder.sendDeploy(multisig.getSender(), toNano('1'), signers.map(s => s.address), expDate, mockOrder, threshold);
 
         expect(res.transactions).toHaveTransaction({
-            from: multisigWallet.address,
+            from: multisig.address,
             to: newOrder.address,
             deploy: true,
             success: true,
@@ -121,10 +121,10 @@ describe('Order', () => {
         const newSigners = await blockchain.createWallets(10);
         const dataBefore = await getContractData(orderContract.address);
 
-        const res = await orderContract.sendDeploy(multisigWallet.getSender(), toNano('1'), newSigners.map((s) => s.address), expDate, mockOrder, threshold);
+        const res = await orderContract.sendDeploy(multisig.getSender(), toNano('1'), newSigners.map((s) => s.address), expDate, mockOrder, threshold);
 
         expect(res.transactions).toHaveTransaction({
-            from: multisigWallet.address,
+            from: multisig.address,
             to: orderContract.address,
             success: false,
             aborted: true,
@@ -174,15 +174,15 @@ describe('Order', () => {
             if(thresholdHit) {
                 expect(res.transactions).toHaveTransaction({
                     from: orderContract.address,
-                    to: multisigWallet.address,
-                    op: Op.multiowner.execute
+                    to: multisig.address,
+                    op: Op.multisig.execute
                 });
             }
             else {
                 expect(res.transactions).not.toHaveTransaction({
                     from: orderContract.address,
-                    to: multisigWallet.address,
-                    op: Op.multiowner.execute
+                    to: multisig.address,
+                    op: Op.multisig.execute
                 });
             }
         }
@@ -261,7 +261,7 @@ describe('Order', () => {
 
     it('should reject order with comment from not signer', async () => {
         let   signerIdx  = 0;
-        let signer     = notOwner;
+        let signer     = notSigner;
         let dataBefore = await orderContract.getOrderData();
         let res = await blockchain.sendMessage(internal({
                 from: signer.address,
@@ -409,15 +409,15 @@ describe('Order', () => {
         // Return balance leftovers
         expect(res.transactions).toHaveTransaction({
             from: orderContract.address,
-            on: multisigWallet.address,
+            on: multisig.address,
             op: Op.order.expired,
             value: balanceBefore - prices.lumpPrice - storageCollected(approveTx),
             success: true
         });
         expect(res.transactions).not.toHaveTransaction({
             from: orderContract.address,
-            to: multisigWallet.address,
-            op: Op.multiowner.execute,
+            to: multisig.address,
+            op: Op.multisig.execute,
         });
 
         dataAfter = await orderContract.getOrderData();
@@ -438,8 +438,8 @@ describe('Order', () => {
             if(i == threshold - 1) {
                 expect(res.transactions).toHaveTransaction({
                     from: orderContract.address,
-                    to: multisigWallet.address,
-                    op: Op.multiowner.execute
+                    to: multisig.address,
+                    op: Op.multisig.execute
                 });
             }
         }
@@ -470,22 +470,22 @@ describe('Order', () => {
         // No execution message
         expect(res.transactions).not.toHaveTransaction({
             from: orderContract.address,
-            to: multisigWallet.address,
-            op: Op.multiowner.execute
+            to: multisig.address,
+            op: Op.multisig.execute
         });
     });
 
     it('should handle 255 signers', async () => {
         const jumboSigners = await blockchain.createWallets(255);
         const jumboOrder   = blockchain.openContract(Order.createFromConfig({
-            multisig: multisigWallet.address,
+            multisig: multisig.address,
             orderSeqno: 1
         }, code));
 
-        let res = await jumboOrder.sendDeploy(multisigWallet.getSender(), toNano('1'), jumboSigners.map(s => s.address), blockchain.now! + 1000, mockOrder, jumboSigners.length);
+        let res = await jumboOrder.sendDeploy(multisig.getSender(), toNano('1'), jumboSigners.map(s => s.address), blockchain.now! + 1000, mockOrder, jumboSigners.length);
 
         expect(res.transactions).toHaveTransaction({
-            from: multisigWallet.address,
+            from: multisig.address,
             to: jumboOrder.address,
             deploy: true,
             success: true
@@ -509,8 +509,8 @@ describe('Order', () => {
 
         expect(res.transactions).toHaveTransaction({
             from: jumboOrder.address,
-            to: multisigWallet.address,
-            op: Op.multiowner.execute,
+            to: multisig.address,
+            op: Op.multisig.execute,
         });
     });
 

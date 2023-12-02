@@ -5,7 +5,7 @@ export type Module = {
     address: Address,
     module: Cell
 };
-export type MultiownerWalletConfig = {
+export type MultisigConfig = {
     threshold: number;
     signers: Array<Address>;
     proposers: Array<Address>;
@@ -60,7 +60,7 @@ function cellToArray(addrDict: Cell | null) : Array<Address>  {
         ds~load_dict(),
         ds~load_dict(), ds~load_maybe_ref());
 */
-export function multiownerWalletConfigToCell(config: MultiownerWalletConfig): Cell {
+export function multisigConfigToCell(config: MultisigConfig): Cell {
     return beginCell()
                 .storeUint(0, 32)
                 .storeUint(config.threshold, 8)
@@ -72,20 +72,20 @@ export function multiownerWalletConfigToCell(config: MultiownerWalletConfig): Ce
            .endCell();
 }
 
-export class MultiownerWallet implements Contract {
+export class Multisig implements Contract {
 
     constructor(readonly address: Address,
                 readonly init?: { code: Cell; data: Cell },
-                readonly configuration?: MultiownerWalletConfig) {}
+                readonly configuration?: MultisigConfig) {}
 
     static createFromAddress(address: Address) {
-        return new MultiownerWallet(address);
+        return new Multisig(address);
     }
 
-    static createFromConfig(config: MultiownerWalletConfig, code: Cell, workchain = 0) {
-        const data = multiownerWalletConfigToCell(config);
+    static createFromConfig(config: MultisigConfig, code: Cell, workchain = 0) {
+        const data = multisigConfigToCell(config);
         const init = { code, data };
-        return new MultiownerWallet(contractAddress(workchain, init), init, config);
+        return new Multisig(contractAddress(workchain, init), init, config);
     }
 
     async sendDeploy(provider: ContractProvider, via: Sender, value: bigint) {
@@ -115,7 +115,7 @@ export class MultiownerWallet implements Contract {
     }
 
     packLarge(actions: Array<Action>, address?: Address) {
-        return MultiownerWallet.packLarge(actions, address ?? this.address);
+        return Multisig.packLarge(actions, address ?? this.address);
     }
     static packLarge(actions: Array<Action>, address: Address) : Cell {
         let packChained = function (req: Cell) : TransferRequest  {
@@ -125,7 +125,7 @@ export class MultiownerWallet implements Contract {
                 message: internal({
                     to: address,
                     value: toNano('0.01'),
-                    body: beginCell().storeUint(Op.multiowner.execute_internal, 32)
+                    body: beginCell().storeUint(Op.multisig.execute_internal, 32)
                                      .storeUint(0, 64)
                                      .storeRef(req)
                           .endCell()
@@ -150,11 +150,11 @@ export class MultiownerWallet implements Contract {
             const chunk = actions.slice(-(chunkSize + actionProcessed), actions.length - actionProcessed);
 
             if(tailChunk === null) {
-                tailChunk = MultiownerWallet.packOrder(chunk);
+                tailChunk = Multisig.packOrder(chunk);
             }
             else {
                 // Every next chunk has to be chained with execute_internal
-                tailChunk = MultiownerWallet.packOrder([...chunk, packChained(tailChunk)]);
+                tailChunk = Multisig.packOrder([...chunk, packChained(tailChunk)]);
             }
 
             actionProcessed += chunkSize;
@@ -175,7 +175,7 @@ export class MultiownerWallet implements Contract {
             // pack transfers to the order_body cell
             for (let i = 0; i < actions.length; i++) {
                 const action = actions[i];
-                const actionCell = action.type === "transfer" ? MultiownerWallet.packTransferRequest(action) : MultiownerWallet.packUpdateRequest(action);
+                const actionCell = action.type === "transfer" ? Multisig.packTransferRequest(action) : Multisig.packUpdateRequest(action);
                 order_dict.set(i, actionCell);
             }
             return beginCell().storeDictDirect(order_dict).endCell();
@@ -188,7 +188,7 @@ export class MultiownerWallet implements Contract {
                            addrIdx: number,
                            query_id: number | bigint = 0) {
 
-       const msgBody = beginCell().storeUint(Op.multiowner.new_order, 32)
+       const msgBody = beginCell().storeUint(Op.multisig.new_order, 32)
                                   .storeUint(query_id, 64)
                                   .storeBit(isSigner)
                                   .storeUint(addrIdx, 8)
@@ -201,7 +201,7 @@ export class MultiownerWallet implements Contract {
         if(actions.length == 0) {
             throw new Error("Order list can't be empty!");
         }
-        let order_cell = MultiownerWallet.packOrder(actions);
+        let order_cell = Multisig.packOrder(actions);
         return msgBody.storeRef(order_cell).endCell();
     }
     async sendNewOrder(provider: ContractProvider, via: Sender,
@@ -236,15 +236,15 @@ export class MultiownerWallet implements Contract {
             newActions = actions;
         }
         else if(actions.length > 255) {
-            newActions = MultiownerWallet.packLarge(actions, this.address);
+            newActions = Multisig.packLarge(actions, this.address);
         }
         else {
-            newActions = MultiownerWallet.packOrder(actions);
+            newActions = Multisig.packOrder(actions);
         }
         await provider.internal(via, {
             sendMode: SendMode.PAY_GAS_SEPARATELY,
             value,
-            body: MultiownerWallet.newOrderMessage(newActions, expirationDate, isSigner, addrIdx, 1)
+            body: Multisig.newOrderMessage(newActions, expirationDate, isSigner, addrIdx, 1)
         });
 
         //console.log(await provider.get("get_order_address", []));
@@ -256,13 +256,13 @@ export class MultiownerWallet implements Contract {
     }
 
     async getOrderEstimate(provider: ContractProvider, order: Order, expiration_date: bigint) {
-        const orderCell = MultiownerWallet.packOrder(order);
+        const orderCell = Multisig.packOrder(order);
         const { stack } = await provider.get('get_order_estimate', [{type: "cell", cell: orderCell}, {type: "int", value: expiration_date}]);
         return stack.readBigNumber();
     }
 
-    async getMultiownerData(provider: ContractProvider) {
-        const { stack } = await provider.get("get_multiowner_data", []);
+    async getMultisigData(provider: ContractProvider) {
+        const { stack } = await provider.get("get_multisig_data", []);
         const nextOrderSeqno = stack.readBigNumber();
         const threshold = stack.readBigNumber();
         const signers = cellToArray(stack.readCellOpt());

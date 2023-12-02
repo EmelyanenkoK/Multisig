@@ -66,13 +66,13 @@
                  ( in_msg_body.slice_refs() == 0));
         ;; lets find signer in the signers dict
         slice index_slice = "fff";
-        int found_owner? = false;
+        int found_signer? = false;
         do {
             (index_slice, slice value, int found?) = signers.dict_get_prev?(INDEX_SIZE, index_slice);
             if(found?) {
                 if (equal_slice_bits(sender, value)) {
                     found? = false;
-                    found_owner? = true;
+                    found_signer? = true;
                     ;; below, in (op == op::approve) we will read in_msg_body to find index
                     ;; fortunately index_slice contains exactly this information and we can reuse logic
                     op = op::approve;
@@ -80,7 +80,7 @@
                 }
             }
         } until (~ found?);
-        throw_unless(error::unauthorized_sign, found_owner?);
+        throw_unless(error::unauthorized_sign, found_signer?);
     } else {
         query_id = in_msg_body~load_query_id();
     }
@@ -105,8 +105,6 @@
            (approvals, approvals_num)~add_approval(signer_index);
             check_threshold? = true;
         }
-        ;; TODO: do we need to send confirmation? multisig should send it back in this case
-        ;;send(multisig, op::inited, query_id, begin_cell().store_slice(order_creator), NOTIFY_AMOUNT, sendmode::REGULAR);
     } elseif(op == op::approve) {
         if (expiration_date < now()) {
             send_msg_builder(sender, 0,

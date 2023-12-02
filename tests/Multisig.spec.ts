@@ -1,6 +1,6 @@
 import { Blockchain, SandboxContract, TreasuryContract, internal, prettyLogTransactions, BlockchainSnapshot, BlockchainTransaction } from '@ton/sandbox';
 import { beginCell, Cell, toNano, internal as internal_relaxed, Address, SendMode, Dictionary } from '@ton/core';
-import { Action, MultiownerWallet, MultiownerWalletConfig, TransferRequest, UpdateRequest } from '../wrappers/MultiownerWallet';
+import { Action, Multisig, MultisigConfig, TransferRequest, UpdateRequest } from '../wrappers/Multisig';
 import { Order } from '../wrappers/Order';
 import '@ton/test-utils';
 import { compile } from '@ton/blueprint';
@@ -8,11 +8,11 @@ import { randomAddress, findTransactionRequired } from '@ton/test-utils';
 import { Op, Errors } from '../Constants';
 import { getRandomInt, differentAddress} from './utils';
 
-describe('MultiownerWallet', () => {
+describe('Multisig', () => {
     let code: Cell;
 
     let blockchain: Blockchain;
-    let multiownerWallet: SandboxContract<MultiownerWallet>;
+    let multisig: SandboxContract<Multisig>;
     let deployer : SandboxContract<TreasuryContract>;
     let proposer : SandboxContract<TreasuryContract>;
     let testMsg : TransferRequest;
@@ -22,7 +22,7 @@ describe('MultiownerWallet', () => {
     let curTime : () => number;
 
     beforeAll(async () => {
-        code = await compile('MultiownerWallet');
+        code = await compile('Multisig');
         blockchain = await Blockchain.create();
         deployer = await blockchain.treasury('deployer');
         proposer = await blockchain.treasury('proposer');
@@ -38,13 +38,13 @@ describe('MultiownerWallet', () => {
         testAddr = randomAddress();
         testMsg = { type: "transfer", sendMode: 1, message: internal_relaxed({to: testAddr, value: toNano('0.015'), body: beginCell().storeUint(12345, 32).endCell()})};
 
-        multiownerWallet = blockchain.openContract(MultiownerWallet.createFromConfig(config, code));
+        multisig = blockchain.openContract(Multisig.createFromConfig(config, code));
 
-        const deployResult = await multiownerWallet.sendDeploy(deployer.getSender(), toNano('0.05'));
+        const deployResult = await multisig.sendDeploy(deployer.getSender(), toNano('0.05'));
 
         expect(deployResult.transactions).toHaveTransaction({
             from: deployer.address,
-            to: multiownerWallet.address,
+            to: multisig.address,
             deploy: true,
             success: true,
         });
@@ -58,22 +58,22 @@ describe('MultiownerWallet', () => {
 
     it('should deploy', async () => {
         // the check is done inside beforeEach
-        // blockchain and multiownerWallet are ready to use
+        // blockchain and Multisig are ready to use
     });
     it('only signers and proposers should be able to create order', async () => {
         const nobody   = await blockchain.treasury('nobody');
 
 
-        const initialSeqno = (await multiownerWallet.getMultiownerData()).nextOrderSeqno;
-        let   orderAddress = await multiownerWallet.getOrderAddress(initialSeqno);
+        const initialSeqno = (await multisig.getMultisigData()).nextOrderSeqno;
+        let   orderAddress = await multisig.getOrderAddress(initialSeqno);
 
         blockchain.now = Math.floor(Date.now() / 1000)
-        const msgSigner= MultiownerWallet.newOrderMessage([testMsg],  blockchain.now + 1000,
+        const msgSigner= Multisig.newOrderMessage([testMsg],  blockchain.now + 1000,
                                                          true, // is signer
                                                          0, // Address index
                                                         );
         // Make sure proposers a checked against list too
-        const msgProp  = MultiownerWallet.newOrderMessage([testMsg],  blockchain.now + 1000,
+        const msgProp  = Multisig.newOrderMessage([testMsg],  blockchain.now + 1000,
                                                          false, // is signer
                                                          0, // Address index
                                                         );
@@ -81,13 +81,13 @@ describe('MultiownerWallet', () => {
         let assertUnauthorizedOrder= (txs: BlockchainTransaction[], from: Address) => {
             expect(txs).toHaveTransaction({
                 from,
-                to: multiownerWallet.address,
+                to: multisig.address,
                 success: false,
                 aborted: true,
-                exitCode: Errors.multiowner.unauthorized_new_order
+                exitCode: Errors.multisig.unauthorized_new_order
             });
             expect(txs).not.toHaveTransaction({
-                from: multiownerWallet.address,
+                from: multisig.address,
                 to: orderAddress,
                 deploy: true
             });
@@ -96,7 +96,7 @@ describe('MultiownerWallet', () => {
         for (let nbMessage of nobodyMsgs) {
             let res = await blockchain.sendMessage(internal({
                 from: nobody.address,
-                to: multiownerWallet.address,
+                to: multisig.address,
                 body: nbMessage,
                 value: toNano('1')
             }));
@@ -107,18 +107,18 @@ describe('MultiownerWallet', () => {
         // Sending from valid proposer address should result in order creation
         let res = await blockchain.sendMessage(internal({
             from: proposer.address,
-            to: multiownerWallet.address,
+            to: multisig.address,
             body: msgProp,
             value: toNano('1')
         }));
 
         expect(res.transactions).toHaveTransaction({
             from : proposer.address,
-            to: multiownerWallet.address,
+            to: multisig.address,
             success: true
         });
         expect(res.transactions).toHaveTransaction({
-            from: multiownerWallet.address,
+            from: multisig.address,
             to: orderAddress,
             deploy: true,
             success: true
@@ -126,16 +126,16 @@ describe('MultiownerWallet', () => {
         // But should not trigger execution
         expect(res.transactions).not.toHaveTransaction({
             from: orderAddress,
-            to: multiownerWallet.address,
-            op: Op.multiowner.execute
+            to: multisig.address,
+            op: Op.multisig.execute
         });
 
         // Order seqno should increase
-        orderAddress = await multiownerWallet.getOrderAddress(initialSeqno + 1n);
+        orderAddress = await multisig.getOrderAddress(initialSeqno + 1n);
         // Sending signer message from proposer should fail
         res = await blockchain.sendMessage(internal({
             from: proposer.address,
-            to: multiownerWallet.address,
+            to: multisig.address,
             body: msgSigner,
             value: toNano('1')
         }));
@@ -143,7 +143,7 @@ describe('MultiownerWallet', () => {
         // Proposer message from signer should fail as well
         res = await blockchain.sendMessage(internal({
             from: deployer.address,
-            to: multiownerWallet.address,
+            to: multisig.address,
             body: msgProp,
             value: toNano('1')
         }));
@@ -151,18 +151,18 @@ describe('MultiownerWallet', () => {
         // Now test signer
         res = await blockchain.sendMessage(internal({
             from: deployer.address,
-            to: multiownerWallet.address,
+            to: multisig.address,
             body: msgSigner,
             value: toNano('1')
         }));
 
         expect(res.transactions).toHaveTransaction({
             from : deployer.address,
-            to: multiownerWallet.address,
+            to: multisig.address,
             success: true
         });
         expect(res.transactions).toHaveTransaction({
-            from: multiownerWallet.address,
+            from: multisig.address,
             to: orderAddress,
             deploy: true,
             success: true
@@ -170,47 +170,47 @@ describe('MultiownerWallet', () => {
         // Now execution should trigger, since threshold is 1
         expect(res.transactions).toHaveTransaction({
             from: orderAddress,
-            to: multiownerWallet.address,
-            op: Op.multiowner.execute
+            to: multisig.address,
+            op: Op.multisig.execute
         });
     });
     it('order expiration time should exceed current time', async () => {
 
-        const initialSeqno = (await multiownerWallet.getMultiownerData()).nextOrderSeqno;
-        let   orderAddress = await multiownerWallet.getOrderAddress(initialSeqno);
+        const initialSeqno = (await multisig.getMultisigData()).nextOrderSeqno;
+        let   orderAddress = await multisig.getOrderAddress(initialSeqno);
 
-        const res = await multiownerWallet.sendNewOrder(deployer.getSender(), [testMsg], curTime() - 100);
+        const res = await multisig.sendNewOrder(deployer.getSender(), [testMsg], curTime() - 100);
         expect(res.transactions).toHaveTransaction({
             from: deployer.address,
-            to: multiownerWallet.address,
+            to: multisig.address,
             success: false,
             aborted: true,
-            exitCode: Errors.multiowner.expired
+            exitCode: Errors.multisig.expired
         });
         expect(res.transactions).not.toHaveTransaction({
-            from: multiownerWallet.address,
+            from: multisig.address,
             to: orderAddress
         });
     });
     it('should reject order creation with insufficient incomming value', async () => {
         const year = 3600 * 24 * 365;
 
-        const initialSeqno = (await multiownerWallet.getMultiownerData()).nextOrderSeqno;
-        let   orderAddress = await multiownerWallet.getOrderAddress(initialSeqno);
+        const initialSeqno = (await multisig.getMultisigData()).nextOrderSeqno;
+        let   orderAddress = await multisig.getOrderAddress(initialSeqno);
 
         // Twice as low as we need
-        const msgValue = (await multiownerWallet.getOrderEstimate([testMsg], BigInt(curTime() + year))) / 2n;
+        const msgValue = (await multisig.getOrderEstimate([testMsg], BigInt(curTime() + year))) / 2n;
 
-        const res = await multiownerWallet.sendNewOrder(deployer.getSender(), [testMsg], curTime() + year, msgValue);
+        const res = await multisig.sendNewOrder(deployer.getSender(), [testMsg], curTime() + year, msgValue);
         expect(res.transactions).toHaveTransaction({
             from: deployer.address,
-            to: multiownerWallet.address,
+            to: multisig.address,
             success: false,
             aborted: true,
-            exitCode: Errors.multiowner.not_enough_ton
+            exitCode: Errors.multisig.not_enough_ton
         });
         expect(res.transactions).not.toHaveTransaction({
-            from: multiownerWallet.address,
+            from: multisig.address,
             to: orderAddress
         });
     });
@@ -229,7 +229,7 @@ describe('MultiownerWallet', () => {
             guard: null,
         };
 
-        const testMultisig = blockchain.openContract(MultiownerWallet.createFromConfig(config, code));
+        const testMultisig = blockchain.openContract(Multisig.createFromConfig(config, code));
 
         let res = await testMultisig.sendDeploy(signers[0].getSender(), toNano('1'));
         expect(res.transactions).toHaveTransaction({
@@ -239,7 +239,7 @@ describe('MultiownerWallet', () => {
         });
 
 
-        const initialSeqno = (await testMultisig.getMultiownerData()).nextOrderSeqno;
+        const initialSeqno = (await testMultisig.getMultisigData()).nextOrderSeqno;
         let   orderAddress = await testMultisig.getOrderAddress(initialSeqno);
 
 
@@ -267,26 +267,26 @@ describe('MultiownerWallet', () => {
         expect(orderData.approvals_num).toBe(1);
     });
     it('should execute new message order', async () => {
-        let initialSeqno = (await multiownerWallet.getMultiownerData()).nextOrderSeqno;
-        // await blockchain.setVerbosityForAddress(multiownerWallet.address, {blockchainLogs:true, vmLogs: 'vm_logs'});
-        const res = await multiownerWallet.sendNewOrder(deployer.getSender(), [testMsg], Math.floor(curTime() + 100));
+        let initialSeqno = (await multisig.getMultisigData()).nextOrderSeqno;
+        // await blockchain.setVerbosityForAddress(multisig.address, {blockchainLogs:true, vmLogs: 'vm_logs'});
+        const res = await multisig.sendNewOrder(deployer.getSender(), [testMsg], Math.floor(curTime() + 100));
 
         expect(res.transactions).toHaveTransaction({
             from: deployer.address,
-            to: multiownerWallet.address,
+            to: multisig.address,
             success: true,
             outMessagesCount: 1
         });
-        expect((await multiownerWallet.getMultiownerData()).nextOrderSeqno).toEqual(initialSeqno + 1n);
-        let orderAddress = await multiownerWallet.getOrderAddress(initialSeqno);
+        expect((await multisig.getMultisigData()).nextOrderSeqno).toEqual(initialSeqno + 1n);
+        let orderAddress = await multisig.getOrderAddress(initialSeqno);
         expect(res.transactions).toHaveTransaction({
-            from: multiownerWallet.address,
+            from: multisig.address,
             to: orderAddress,
             success: true
         });
         // one signer and threshold is 1
         expect(res.transactions).toHaveTransaction({
-            from: multiownerWallet.address,
+            from: multisig.address,
             to: testAddr,
             value: toNano('0.015'),
             body: testMsg.message.body
@@ -294,18 +294,18 @@ describe('MultiownerWallet', () => {
     });
     it('should be possible to execute order by post init approval', async () => {
         // Same test as above, but with manulal approval
-        let initialSeqno = (await multiownerWallet.getMultiownerData()).nextOrderSeqno;
+        let initialSeqno = (await multisig.getMultisigData()).nextOrderSeqno;
         // Gets deployed by proposer, so first approval is not granted right away
-        let res = await multiownerWallet.sendNewOrder(proposer.getSender(), [testMsg], Math.floor(curTime() + 100));
+        let res = await multisig.sendNewOrder(proposer.getSender(), [testMsg], Math.floor(curTime() + 100));
 
         expect(res.transactions).toHaveTransaction({
             from: proposer.address,
-            to: multiownerWallet.address,
+            to: multisig.address,
             success: true,
             outMessagesCount: 1
         });
-        expect((await multiownerWallet.getMultiownerData()).nextOrderSeqno).toEqual(initialSeqno + 1n);
-        let orderAddress = await multiownerWallet.getOrderAddress(initialSeqno);
+        expect((await multisig.getMultisigData()).nextOrderSeqno).toEqual(initialSeqno + 1n);
+        let orderAddress = await multisig.getOrderAddress(initialSeqno);
         const orderContract = blockchain.openContract(Order.createFromAddress(orderAddress));
         const dataBefore = await orderContract.getOrderData();
 
@@ -316,13 +316,13 @@ describe('MultiownerWallet', () => {
         res = await orderContract.sendApprove(deployer.getSender(), 0);
         expect(res.transactions).toHaveTransaction({
             from: orderAddress,
-            to: multiownerWallet.address,
-            op: Op.multiowner.execute,
+            to: multisig.address,
+            op: Op.multisig.execute,
             success: true
         });
         // one signer and threshold is 1
         expect(res.transactions).toHaveTransaction({
-            from: multiownerWallet.address,
+            from: multisig.address,
             to: testAddr,
             value: toNano('0.015'),
             body: testMsg.message.body
@@ -331,9 +331,9 @@ describe('MultiownerWallet', () => {
 
     it('order estimate should work', async () => {
         const testMsg: TransferRequest = {type: "transfer", sendMode: 1, message: internal_relaxed({to: randomAddress(), value: toNano('0.015'), body: beginCell().storeUint(12345, 32).endCell()})};
-        const hrEst = await multiownerWallet.getOrderEstimate([testMsg], BigInt(curTime() + 3600));
+        const hrEst = await multisig.getOrderEstimate([testMsg], BigInt(curTime() + 3600));
         console.log("Estimate for one hour:", hrEst);
-        const yearEst = await multiownerWallet.getOrderEstimate([testMsg], BigInt(curTime() + 3600 * 24 * 365));
+        const yearEst = await multisig.getOrderEstimate([testMsg], BigInt(curTime() + 3600 * 24 * 365));
         console.log("Estimate for yearly storage:", yearEst);
         console.log("Storage delta:", yearEst - hrEst);
     });
@@ -342,31 +342,31 @@ describe('MultiownerWallet', () => {
         const testAddr2 = randomAddress();
         const testMsg1: TransferRequest = { type: "transfer", sendMode: 1, message: internal_relaxed({to: testAddr1, value: toNano('0.015'), body: beginCell().storeUint(12345, 32).endCell()})};
         const testMsg2: TransferRequest = {type : "transfer", sendMode: 1, message: internal_relaxed({to: testAddr2, value: toNano('0.016'), body: beginCell().storeUint(12346, 32).endCell()})};
-        let initialSeqno = (await multiownerWallet.getMultiownerData()).nextOrderSeqno;
-        let res = await multiownerWallet.sendNewOrder(deployer.getSender(), [testMsg1, testMsg2], Math.floor(Date.now() / 1000 + 1000));
+        let initialSeqno = (await multisig.getMultisigData()).nextOrderSeqno;
+        let res = await multisig.sendNewOrder(deployer.getSender(), [testMsg1, testMsg2], Math.floor(Date.now() / 1000 + 1000));
 
         expect(res.transactions).toHaveTransaction({
             from: deployer.address,
-            to: multiownerWallet.address,
+            to: multisig.address,
             success: true,
             outMessagesCount: 1
         });
-        expect((await multiownerWallet.getMultiownerData()).nextOrderSeqno).toEqual(initialSeqno + 1n);
-        let orderAddress = await multiownerWallet.getOrderAddress(initialSeqno);
+        expect((await multisig.getMultisigData()).nextOrderSeqno).toEqual(initialSeqno + 1n);
+        let orderAddress = await multisig.getOrderAddress(initialSeqno);
         expect(res.transactions).toHaveTransaction({
-            from: multiownerWallet.address,
+            from: multisig.address,
             to: orderAddress,
             success: true
         });
 
         let order1Tx = findTransactionRequired(res.transactions, {
-            from: multiownerWallet.address,
+            from: multisig.address,
             to: testAddr1,
             value: toNano('0.015'),
             body: beginCell().storeUint(12345, 32).endCell(),
         });
         let order2Tx = findTransactionRequired(res.transactions, {
-            from: multiownerWallet.address,
+            from: multisig.address,
             to: testAddr2,
             value: toNano('0.016'),
             body: beginCell().storeUint(12346, 32).endCell(),
@@ -376,16 +376,16 @@ describe('MultiownerWallet', () => {
         expect(order2Tx!.lt).toBeGreaterThan(order1Tx!.lt);
         // Let's switch the order
 
-        res = await multiownerWallet.sendNewOrder(deployer.getSender(), [testMsg2, testMsg1], Math.floor(Date.now() / 1000 + 1000));
+        res = await multisig.sendNewOrder(deployer.getSender(), [testMsg2, testMsg1], Math.floor(Date.now() / 1000 + 1000));
 
         order1Tx = findTransactionRequired(res.transactions, {
-            from: multiownerWallet.address,
+            from: multisig.address,
             to: testAddr1,
             value: toNano('0.015'),
             body: beginCell().storeUint(12345, 32).endCell(),
         });
         order2Tx = findTransactionRequired(res.transactions, {
-            from: multiownerWallet.address,
+            from: multisig.address,
             to: testAddr2,
             value: toNano('0.016'),
             body: beginCell().storeUint(12346, 32).endCell(),
@@ -401,24 +401,24 @@ describe('MultiownerWallet', () => {
             signers: [newSigner.address],
             proposers: []
         };
-        let initialSeqno = (await multiownerWallet.getMultiownerData()).nextOrderSeqno;
-        let res = await multiownerWallet.sendNewOrder(deployer.getSender(), [updOrder], Math.floor(Date.now() / 1000 + 1000));
+        let initialSeqno = (await multisig.getMultisigData()).nextOrderSeqno;
+        let res = await multisig.sendNewOrder(deployer.getSender(), [updOrder], Math.floor(Date.now() / 1000 + 1000));
 
-        expect((await multiownerWallet.getMultiownerData()).nextOrderSeqno).toEqual(initialSeqno + 1n);
-        let orderAddress = await multiownerWallet.getOrderAddress(initialSeqno);
+        expect((await multisig.getMultisigData()).nextOrderSeqno).toEqual(initialSeqno + 1n);
+        let orderAddress = await multisig.getOrderAddress(initialSeqno);
         expect(res.transactions).toHaveTransaction({
-            from: multiownerWallet.address,
+            from: multisig.address,
             to: orderAddress,
             success: true
         });
         expect(res.transactions).toHaveTransaction({
             from: orderAddress,
-            to: multiownerWallet.address,
-            op: Op.multiowner.execute,
+            to: multisig.address,
+            op: Op.multisig.execute,
             success: true
         });
 
-        const dataAfter = await multiownerWallet.getMultiownerData();
+        const dataAfter = await multisig.getMultisigData();
         expect(dataAfter.threshold).toEqual(BigInt(updOrder.threshold));
         expect(dataAfter.signers[0]).toEqualAddress(newSigner.address);
         expect(dataAfter.proposers.length).toBe(0);
@@ -441,20 +441,20 @@ describe('MultiownerWallet', () => {
 
         let orderCell = beginCell().storeDictDirect(orderDict).endCell();
 
-        let dataBefore   = await multiownerWallet.getMultiownerData();
-        let orderAddress = await multiownerWallet.getOrderAddress(dataBefore.nextOrderSeqno);
-        let res = await multiownerWallet.sendNewOrder(deployer.getSender(), orderCell, curTime() + 100);
+        let dataBefore   = await multisig.getMultisigData();
+        let orderAddress = await multisig.getOrderAddress(dataBefore.nextOrderSeqno);
+        let res = await multisig.sendNewOrder(deployer.getSender(), orderCell, curTime() + 100);
         expect(res.transactions).toHaveTransaction({
             from: orderAddress,
-            to: multiownerWallet.address,
-            op: Op.multiowner.execute,
+            to: multisig.address,
+            op: Op.multisig.execute,
             aborted: true,
             success: false,
-            exitCode: Errors.multiowner.invalid_dictionary_sequence
+            exitCode: Errors.multisig.invalid_dictionary_sequence
         });
 
         const stringify = (x: Address) => x.toString();
-        let dataAfter = await multiownerWallet.getMultiownerData();
+        let dataAfter = await multisig.getMultisigData();
         // Order seqno should increase
         expect(dataAfter.nextOrderSeqno).toEqual(dataBefore.nextOrderSeqno + 1n);
         // Rest stay same
@@ -464,8 +464,8 @@ describe('MultiownerWallet', () => {
         expect(dataAfter.modules).toEqual(dataBefore.modules);
         expect(dataAfter.guard).toEqual(dataBefore.guard);
 
-        dataBefore   = await multiownerWallet.getMultiownerData();
-        orderAddress = await multiownerWallet.getOrderAddress(dataBefore.nextOrderSeqno);
+        dataBefore   = await multisig.getMultisigData();
+        orderAddress = await multisig.getOrderAddress(dataBefore.nextOrderSeqno);
 
         // Now let's test if proposers order is checked
         malformed.clear();
@@ -485,17 +485,17 @@ describe('MultiownerWallet', () => {
         orderDict.set(0, updateCell);
         orderCell = beginCell().storeDictDirect(orderDict).endCell();
 
-        res = await multiownerWallet.sendNewOrder(deployer.getSender(), orderCell, curTime() + 100);
+        res = await multisig.sendNewOrder(deployer.getSender(), orderCell, curTime() + 100);
         expect(res.transactions).toHaveTransaction({
             from: orderAddress,
-            to: multiownerWallet.address,
-            op: Op.multiowner.execute,
+            to: multisig.address,
+            op: Op.multisig.execute,
             aborted: true,
             success: false,
-            exitCode: Errors.multiowner.invalid_dictionary_sequence
+            exitCode: Errors.multisig.invalid_dictionary_sequence
         });
 
-        dataAfter = await multiownerWallet.getMultiownerData();
+        dataAfter = await multisig.getMultisigData();
         // Order seqno should increase
         expect(dataAfter.nextOrderSeqno).toEqual(dataBefore.nextOrderSeqno + 1n);
         // Rest stay same
@@ -521,8 +521,8 @@ describe('MultiownerWallet', () => {
         };
 
         const order_dict = Dictionary.empty(Dictionary.Keys.Uint(8), Dictionary.Values.Cell());
-        order_dict.set(0, MultiownerWallet.packTransferRequest(testReq));
-        const testBody = beginCell().storeUint(Op.multiowner.execute_internal, 32)
+        order_dict.set(0, Multisig.packTransferRequest(testReq));
+        const testBody = beginCell().storeUint(Op.multisig.execute_internal, 32)
                                     .storeUint(0, 64)
                                     .storeRef(beginCell().storeDictDirect(order_dict).endCell())
                          .endCell();
@@ -530,18 +530,18 @@ describe('MultiownerWallet', () => {
         for (let testWallet of roles) {
             let res = await blockchain.sendMessage(internal({
                 from: testWallet.address,
-                to: multiownerWallet.address,
+                to: multisig.address,
                 value: toNano('1'),
                 body: testBody
             }));
             expect(res.transactions).toHaveTransaction({
                 from: testWallet.address,
-                to: multiownerWallet.address,
-                op: Op.multiowner.execute_internal,
+                to: multisig.address,
+                op: Op.multisig.execute_internal,
                 aborted: true
             });
             expect(res.transactions).not.toHaveTransaction({
-                from: multiownerWallet.address,
+                from: multisig.address,
                 to: testAddr
             });
         }
@@ -560,52 +560,52 @@ describe('MultiownerWallet', () => {
             })
         };
         const order_dict = Dictionary.empty(Dictionary.Keys.Uint(8), Dictionary.Values.Cell());
-        order_dict.set(0, MultiownerWallet.packTransferRequest(chainedReq));
+        order_dict.set(0, Multisig.packTransferRequest(chainedReq));
         const triggerReq: TransferRequest = {
             type: "transfer",
             sendMode: 1,
             message: internal_relaxed({
-            to: multiownerWallet.address,
+            to: multisig.address,
             value: toNano('0.01'),
-            body: beginCell().storeUint(Op.multiowner.execute_internal, 32)
+            body: beginCell().storeUint(Op.multisig.execute_internal, 32)
                             .storeUint(0, 64)
                             .storeRef(beginCell().storeDictDirect(order_dict).endCell())
                   .endCell()
             })
         };
-        const res = await multiownerWallet.sendNewOrder(deployer.getSender(), [triggerReq], curTime() + 1000, toNano('1'));
+        const res = await multisig.sendNewOrder(deployer.getSender(), [triggerReq], curTime() + 1000, toNano('1'));
 
         expect(res.transactions).toHaveTransaction({
             from: deployer.address,
-            to: multiownerWallet.address,
+            to: multisig.address,
             success: true
         });
         // Self message
         expect(res.transactions).toHaveTransaction({
-            from: multiownerWallet.address,
-            to: multiownerWallet.address,
-            op: Op.multiowner.execute_internal,
+            from: multisig.address,
+            to: multisig.address,
+            op: Op.multisig.execute_internal,
             success: true
         });
         // Chained message
         expect(res.transactions).toHaveTransaction({
-            from: multiownerWallet.address,
+            from: multisig.address,
             to: testAddr,
             value: toNano('0.01'),
             body: testBody
         });
     });
-    it('multiowner should invalidate previous orders if signers change', async () => {
+    it('multisig should invalidate previous orders if signers change', async () => {
         const testAddr = randomAddress();
         const testBody = beginCell().storeUint(0x12345, 32).endCell();
 
-        const dataBefore = await multiownerWallet.getMultiownerData();
-        const orderAddr    = await multiownerWallet.getOrderAddress(dataBefore.nextOrderSeqno);
+        const dataBefore = await multisig.getMultisigData();
+        const orderAddr    = await multisig.getOrderAddress(dataBefore.nextOrderSeqno);
         const testMsg: TransferRequest = {
             type: "transfer",
             sendMode: 1,
             message: internal_relaxed({
-                to: multiownerWallet.address,
+                to: multisig.address,
                 value: toNano('0.015'),
                 body: testBody
             })
@@ -618,38 +618,38 @@ describe('MultiownerWallet', () => {
         };
 
         // First we deploy order with proposer, so it doesn't execute right away
-        let res = await multiownerWallet.sendNewOrder(proposer.getSender(), [testMsg], curTime() + 1000);
+        let res = await multisig.sendNewOrder(proposer.getSender(), [testMsg], curTime() + 1000);
         expect(res.transactions).toHaveTransaction({
-            from: multiownerWallet.address,
+            from: multisig.address,
             to: orderAddr,
             deploy: true,
             success: true
         });
         // Now lets perform signers update
-        res = await multiownerWallet.sendNewOrder(deployer.getSender(), [updOrder], curTime() + 100);
+        res = await multisig.sendNewOrder(deployer.getSender(), [updOrder], curTime() + 100);
 
         expect(res.transactions).toHaveTransaction({
             from: deployer.address,
-            to: multiownerWallet.address,
+            to: multisig.address,
             success: true
         });
-        expect((await multiownerWallet.getMultiownerData()).signers[0]).not.toEqualAddress(dataBefore.signers[0]);
+        expect((await multisig.getMultisigData()).signers[0]).not.toEqualAddress(dataBefore.signers[0]);
 
         const orderContract = blockchain.openContract(Order.createFromAddress(orderAddr));
         // Now let's approve old order
         res = await orderContract.sendApprove(deployer.getSender(), 0);
         expect(res.transactions).toHaveTransaction({
             from: orderAddr,
-            to: multiownerWallet.address,
-            op: Op.multiowner.execute,
+            to: multisig.address,
+            op: Op.multisig.execute,
             aborted: true,
             success: false,
-            exitCode: Errors.multiowner.singers_outdated
+            exitCode: Errors.multisig.singers_outdated
         });
     });
-    it('multiowner should not execute orders deployed by other multiowner contract', async () => {
+    it('multisig should not execute orders deployed by other multisig contract', async () => {
         const coolHacker = await blockchain.treasury('1337');
-        const newConfig : MultiownerWalletConfig = {
+        const newConfig : MultisigConfig = {
             threshold: 1,
             signers: [coolHacker.address], // So deployment init is same except just one field (so still different address)
             proposers: [proposer.address],
@@ -657,13 +657,13 @@ describe('MultiownerWallet', () => {
             guard: null
         };
 
-        const evilMultiowner = blockchain.openContract(MultiownerWallet.createFromConfig(newConfig,code));
+        const evilMultisig = blockchain.openContract(Multisig.createFromConfig(newConfig,code));
 
-        const legitData = await multiownerWallet.getMultiownerData();
-        let res = await evilMultiowner.sendDeploy(coolHacker.getSender(), toNano('10'));
+        const legitData = await multisig.getMultisigData();
+        let res = await evilMultisig.sendDeploy(coolHacker.getSender(), toNano('10'));
         expect(res.transactions).toHaveTransaction({
             from: coolHacker.address,
-            to: evilMultiowner.address,
+            to: evilMultisig.address,
             deploy: true,
             success: true
         });
@@ -677,7 +677,7 @@ describe('MultiownerWallet', () => {
             })
         };
         const order_dict = Dictionary.empty(Dictionary.Keys.Uint(8), Dictionary.Values.Cell());
-        order_dict.set(0, MultiownerWallet.packTransferRequest(evilPayload));
+        order_dict.set(0, Multisig.packTransferRequest(evilPayload));
 
         const mock_signers = Dictionary.empty(Dictionary.Keys.Uint(8), Dictionary.Values.Address());
         // Copy the real signers
@@ -688,9 +688,9 @@ describe('MultiownerWallet', () => {
             type: "transfer",
             sendMode: 1,
             message: internal_relaxed({
-            to: multiownerWallet.address,
+            to: multisig.address,
             value: toNano('0.01'),
-            body: beginCell().storeUint(Op.multiowner.execute, 32)
+            body: beginCell().storeUint(Op.multisig.execute, 32)
                             .storeUint(0, 64)
                             .storeUint(legitData.nextOrderSeqno, 32)
                             .storeUint(BigInt('0x' + beginCell().storeDictDirect(mock_signers).endCell().hash().toString('hex')), 256) // pack legit hash
@@ -699,19 +699,19 @@ describe('MultiownerWallet', () => {
             })
         };
 
-        res = await evilMultiowner.sendNewOrder(coolHacker.getSender(), [evalOrder], curTime() + 100);
+        res = await evilMultisig.sendNewOrder(coolHacker.getSender(), [evalOrder], curTime() + 100);
 
         expect(res.transactions).toHaveTransaction({
-            from: evilMultiowner.address,
-            to: multiownerWallet.address,
-            op: Op.multiowner.execute,
+            from: evilMultisig.address,
+            to: multisig.address,
+            op: Op.multisig.execute,
             aborted: true,
             success: false,
-            exitCode: Errors.multiowner.unauthorized_execute
+            exitCode: Errors.multisig.unauthorized_execute
         });
         // No funds exfiltrated
         expect(res.transactions).not.toHaveTransaction({
-            from: multiownerWallet.address,
+            from: multisig.address,
             to: coolHacker.address
         });
     });
@@ -720,7 +720,7 @@ describe('MultiownerWallet', () => {
         // Topping up
         await blockchain.sendMessage(internal({
             from: deployer.address,
-            to: multiownerWallet.address,
+            to: multisig.address,
             body: beginCell().storeUint(0, 32).storeUint(0, 64).endCell(),
             value: toNano('1000')
         }));
@@ -742,23 +742,23 @@ describe('MultiownerWallet', () => {
         }
 
         console.log("Fire!");
-        const res = await multiownerWallet.sendNewOrder(deployer.getSender(), order, curTime() + 100, toNano('100'));
+        const res = await multisig.sendNewOrder(deployer.getSender(), order, curTime() + 100, toNano('100'));
 
         expect(res.transactions).toHaveTransaction({
-            to: multiownerWallet.address,
-            op: Op.multiowner.execute,
+            to: multisig.address,
+            op: Op.multisig.execute,
             success: true
         });
         expect(res.transactions).toHaveTransaction({
-            to: multiownerWallet.address,
-            op: Op.multiowner.execute_internal
+            to: multisig.address,
+            op: Op.multisig.execute_internal
         });
 
         let prevLt = 0n;
         for(let i = 0; i < orderCount; i++) {
             // console.log("Testing tx:", i);
             const tx = findTransactionRequired(res.transactions, {
-                from: multiownerWallet.address,
+                from: multisig.address,
                 to: deployer.address,
                 op: i,
             });

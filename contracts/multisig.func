@@ -178,7 +178,7 @@ cell modules, cell guard) impure {
         modules, guard);
 }
 
-(int, int, cell, cell, cell, cell) get_multiowner_data() method_id  {
+(int, int, cell, cell, cell, cell) get_multisig_data() method_id  {
     (int next_order_seqno, int threshold,
         cell signers, int signers_num,
         cell proposers,

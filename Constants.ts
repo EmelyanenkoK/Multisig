@@ -1,5 +1,5 @@
 export abstract class Op {
-    static readonly multiowner = {
+    static readonly multisig = {
         new_order : 0x1,
         execute: 0x2,
         execute_internal: 0x3
@@ -18,7 +18,7 @@ export abstract class Op {
 }
 
 export abstract class Errors {
-    static readonly multiowner = {
+    static readonly multisig = {
         unauthorized_new_order : 1007,
         not_enough_ton : 100,
         unauthorized_execute : 101,
