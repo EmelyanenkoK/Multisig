@@ -22,6 +22,25 @@ This Multisignature wallet was developed keeping in mind [Safe{Wallet}](https://
 - _Proposer_ compromise does not hinder to execute orders or to propose new ones (including orders which will remove compromised _proposer_ from the proposers list)
 - Logic of multisignature wallet can not be changed after deploy
 
+## Architecture
+Whole system consists of four parts:
+* Signers - independent actors who approves orders execution
+* Proposers - helper actors who may propose new orders for execution
+* Multisig - contract that execute approved orders, thus it is address which will own assets and permissions; Multisig contract also store information on number of orders, current Signers and Proposers sets
+* Orders - child contracts, each of them holds information on one order: content of the order and approvals
+
+Flow is as follows:
+1) proposer of new order (address from Proposers or Signers sets) build new order which consist of arbitrary number transfers from Multisig address and sends request to Multisig to start approval of this order
+2) Multisig receives the request, check that it is sent from authorized actor and deploy child sub-contract Order which holds order content
+3) Signers independently send approval messages to Order contract
+4) Once Order gets enough approvals it sends request to execute order to Multisig
+5) Multisig authenticate Order (that it is indeed sent by Order and not by somebody else) as well as that set of Signers is still relevant and execute order (sends transfers from order)
+6) If Order needs to have more than 255 transfers (limit of transfers in one tx), excessive transactions may be packed in last transfer from Multisig to itself as `internal_execute`
+7) Multisig receives `internal_execute`, checks that it is sent from itself and continue execution.
+
+All fees on processing order (except order execution itself): creation Order contract and it's storage fees are borne by the actor who propose this order (whether it's Proposer or Signer).
+
+Besides transfers, Order may also contain Multisig Update Requests
 
 ## Experimental features
 Basic Multisignature wallet **does not require** experimental features.
