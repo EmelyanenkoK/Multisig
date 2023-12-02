@@ -125,7 +125,8 @@
         } else {
             int signer_index = in_msg_body~load_index();
             (slice signer, int found?) = signers.udict_get?(INDEX_SIZE, signer_index);
-            throw_unless(error::unauthorized_sign, found? & equal_slice_bits(sender, signer));
+            throw_unless(error::unauthorized_sign, found?);
+            throw_unless(error::unauthorized_sign, equal_slice_bits(sender, signer));
 
             (approvals, approvals_num) ~add_approval(signer_index);
             check_threshold? = true;
