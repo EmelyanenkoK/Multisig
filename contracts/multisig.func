@@ -135,6 +135,7 @@ cell modules, cell guard) impure {
         ;; signers dict
 
         int order_seqno = in_msg_body~load_order_seqno();
+        int expiration_date = in_msg_body~load_timestamp();
         int signers_hash = in_msg_body~load_hash();
         cell order_body = in_msg_body~load_ref();
 
@@ -143,6 +144,7 @@ cell modules, cell guard) impure {
 
         throw_unless(error::unauthorized_execute, equal_slice_bits(sender, order_address));
         throw_unless(error::singers_outdated, signers_hash == signers.cell_hash());
+        throw_unless(error::expired, expiration_date > now());
 
         (threshold, signers, signers_num,
             proposers, modules, guard)~execute_order(order_body);

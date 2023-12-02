@@ -693,6 +693,7 @@ describe('Multisig', () => {
             body: beginCell().storeUint(Op.multisig.execute, 32)
                             .storeUint(0, 64)
                             .storeUint(legitData.nextOrderSeqno, 32)
+                            .storeUint(0xffffffffffff, 48)
                             .storeUint(BigInt('0x' + beginCell().storeDictDirect(mock_signers).endCell().hash().toString('hex')), 256) // pack legit hash
                             .storeRef(beginCell().storeDictDirect(order_dict).endCell()) // Finally eval payload
                   .endCell()

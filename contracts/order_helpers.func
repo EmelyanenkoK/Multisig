@@ -50,14 +50,14 @@ const int CONFIG::basechain_fwd_prices = 25;
 
 const int MULTISIG_INIT_ORDER_GAS = 17627;
 const int ORDER_INIT_GAS = 5128;
-const int ORDER_EXECUTE_GAS = 9951;
-const int MULTISIG_EXECUTE_GAS = 13062;
+const int ORDER_EXECUTE_GAS = 10013;
+const int MULTISIG_EXECUTE_GAS = 13220;
 ;; we call number of bits/cells without order bits/cells as "overhead"
-const int INIT_ORDER_BIT_OVERHEAD = 7801;
+const int INIT_ORDER_BIT_OVERHEAD = 7833;
 const int INIT_ORDER_CELL_OVERHEAD = 25;
-const int ORDER_STATE_BIT_OVERHEAD = 7357;
+const int ORDER_STATE_BIT_OVERHEAD = 7389;
 const int ORDER_STATE_CELL_OVERHEAD = 25;
-const int EXECUTE_ORDER_BIT_OVERHEAD = 1089;
+const int EXECUTE_ORDER_BIT_OVERHEAD = 1137;
 const int EXECUTE_ORDER_CELL_OVERHEAD = 2;
 
 int flat_gas_wrapper(int flat_gas_limit, int flat_gas_price, int gas_price, int gas) {
