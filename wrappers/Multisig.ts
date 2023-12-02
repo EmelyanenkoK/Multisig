@@ -1,5 +1,5 @@
 import { Address, beginCell,  Cell, Dictionary, MessageRelaxed, storeMessageRelaxed, Contract, contractAddress, ContractProvider, Sender, SendMode, internal, toNano } from '@ton/core';
-import { Op } from "../Constants";
+import { Op } from "./Constants";
 
 export type Module = {
     address: Address,

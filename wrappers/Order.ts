@@ -1,5 +1,5 @@
 import { Address, beginCell,  Cell, Builder, BitString, Dictionary, Contract, contractAddress, ContractProvider, Sender, SendMode, toNano } from '@ton/core';
-import { Op } from "../Constants";
+import { Op } from "./Constants";
 
 export type OrderConfig = {
     multisig: Address,

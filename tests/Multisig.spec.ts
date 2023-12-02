@@ -5,7 +5,7 @@ import { Order } from '../wrappers/Order';
 import '@ton/test-utils';
 import { compile } from '@ton/blueprint';
 import { randomAddress, findTransactionRequired } from '@ton/test-utils';
-import { Op, Errors } from '../Constants';
+import { Op, Errors } from '../wrappers/Constants';
 import { getRandomInt, differentAddress} from './utils';
 
 describe('Multisig', () => {
@@ -694,6 +694,7 @@ describe('Multisig', () => {
                             .storeUint(0, 64)
                             .storeUint(legitData.nextOrderSeqno, 32)
                             .storeUint(0xffffffffffff, 48)
+                            .storeUint(0xff, 8)
                             .storeUint(BigInt('0x' + beginCell().storeDictDirect(mock_signers).endCell().hash().toString('hex')), 256) // pack legit hash
                             .storeRef(beginCell().storeDictDirect(order_dict).endCell()) // Finally eval payload
                   .endCell()

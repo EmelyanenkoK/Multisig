@@ -143,6 +143,7 @@
             begin_cell().store_body_header(op::execute, query_id)
             .store_order_seqno(order_seqno)
             .store_timestamp(expiration_date)
+            .store_index(approvals_num)
             .store_hash(signers.cell_hash())
             .store_ref(order),
             msgflag::BOUNCEABLE,
