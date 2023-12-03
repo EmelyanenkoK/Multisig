@@ -61,8 +61,9 @@ const int EXECUTE_ORDER_BIT_OVERHEAD = 384;
 const int EXECUTE_ORDER_CELL_OVERHEAD = 1;
 
 int flat_gas_wrapper(int flat_gas_limit, int flat_gas_price, int gas_price, int gas) {
+    ;; Gas calculation: https://github.com/ton-blockchain/ton/blob/51baec48a02e5ba0106b0565410d2c2fd4665157/crypto/block/transaction.cpp#L1124
     int flat_part = min(gas, flat_gas_limit);
-    return (flat_gas_price + (gas - flat_part) * gas_price) / 65536;
+    return flat_gas_price + ((gas - flat_part) * gas_price ^/ 65536);
 }
 
 int calculate_order_processing_cost(cell order_body, int duration) {
@@ -75,18 +76,28 @@ int calculate_order_processing_cost(cell order_body, int duration) {
        6) Forward cost for Order->Multisig message
        7) Gas cost on Multisig till accept_message
     -}
-    var (bit_price_ps, cell_price_ps, flat_gas_limit, flat_gas_price, gas_price, lump_price, bit_price, cell_price) = 
+    var (bit_price_ps, cell_price_ps, flat_gas_limit, flat_gas_price, gas_price, lump_price, bit_price, cell_price) =
     get_fee_constants();
     (int order_cells, int order_bits, _) = compute_data_size(order_body, 2048);
-    return flat_gas_wrapper(flat_gas_limit, flat_gas_price, gas_price, MULTISIG_INIT_ORDER_GAS) +
+    return (flat_gas_wrapper(flat_gas_limit, flat_gas_price, gas_price, MULTISIG_INIT_ORDER_GAS) +
            flat_gas_wrapper(flat_gas_limit, flat_gas_price, gas_price, ORDER_INIT_GAS) +
            flat_gas_wrapper(flat_gas_limit, flat_gas_price, gas_price, ORDER_EXECUTE_GAS) +
-           flat_gas_wrapper(flat_gas_limit, flat_gas_price, gas_price, MULTISIG_EXECUTE_GAS) +
-           2 * lump_price + (((INIT_ORDER_BIT_OVERHEAD + EXECUTE_ORDER_BIT_OVERHEAD + 2 * order_bits) * bit_price) +
-           ((INIT_ORDER_CELL_OVERHEAD + EXECUTE_ORDER_CELL_OVERHEAD + 2 * order_cells) * cell_price)) ^/ 65536 +
-           (((ORDER_STATE_BIT_OVERHEAD + order_bits) * bit_price_ps * duration) +
-           ((ORDER_STATE_CELL_OVERHEAD + order_cells) * cell_price_ps * duration)) ^/ 65536;
-           ;; 2 * lump_price +
+           flat_gas_wrapper(flat_gas_limit, flat_gas_price, gas_price, MULTISIG_EXECUTE_GAS)) +
+           {-
+             Forward
+             https://github.com/ton-blockchain/ton/blob/51baec48a02e5ba0106b0565410d2c2fd4665157/crypto/block/transaction.cpp#L1838
+           -}
+           (2 * lump_price +
+           (((INIT_ORDER_BIT_OVERHEAD  + EXECUTE_ORDER_BIT_OVERHEAD + 2 * order_bits) * bit_price +
+           (INIT_ORDER_CELL_OVERHEAD + EXECUTE_ORDER_CELL_OVERHEAD + 2 * order_cells) * cell_price) ^/ 65536)) +
+           {-
+             Storage
+             Calculation:https://github.com/ton-blockchain/ton/blob/51baec48a02e5ba0106b0565410d2c2fd4665157/crypto/block/transaction.cpp#L629
+             Ceil rounding:https://github.com/ton-blockchain/ton/blob/51baec48a02e5ba0106b0565410d2c2fd4665157/crypto/block/transaction.cpp#L674
+           -}
+           (((ORDER_STATE_BIT_OVERHEAD + order_bits) * bit_price_ps +
+           (ORDER_STATE_CELL_OVERHEAD + order_cells) * cell_price_ps) * duration ^/ 65536);
+
            ;; muldiv((INIT_ORDER_BIT_OVERHEAD + EXECUTE_ORDER_BIT_OVERHEAD + 2 * order_bits), bit_price, 65536) +
            ;; muldiv((INIT_ORDER_CELL_OVERHEAD + EXECUTE_ORDER_CELL_OVERHEAD + 2 * order_cells), cell_price, 65536) +
            ;; muldiv(ORDER_STATE_BIT_OVERHEAD + order_bits, bit_price_ps * duration, 65536) +
