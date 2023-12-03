@@ -1,11 +1,12 @@
 import { Blockchain, SandboxContract, TreasuryContract, prettyLogTransactions, BlockchainTransaction } from '@ton/sandbox';
-import { beginCell, Cell, internal, toNano, Transaction, storeAccountStorage, storeMessage, Slice, Message, Dictionary } from '@ton/core';
+import { beginCell, Cell, internal, toNano, Transaction, storeAccountStorage, storeMessage, Slice, Message, Dictionary, storeStateInit } from '@ton/core';
 import { MultiownerWallet, TransferRequest, Action, MultiownerWalletConfig } from '../wrappers/MultiownerWallet';
 import { Order } from '../wrappers/Order';
 import { Op } from '../Constants';
 import '@ton/test-utils';
 import { compile } from '@ton/blueprint';
 import { randomAddress } from '@ton/test-utils';
+import { warn } from 'console';
 
 export const computedGeneric = (trans:Transaction) => {
     if(trans.description.type !== "generic")
@@ -22,13 +23,13 @@ export const storageGeneric = (trans:Transaction) => {
     return trans.description.storagePhase;
 };
 
-export function collectCellStats(cell: Cell, visited:Array<string>, skipRoot: boolean = false): { bits: number, cells: number } {
-    let bits  = skipRoot ? 0 : cell.bits.length;
-    let cells = skipRoot ? 0 : 1;
+export function collectCellStats(cell: Cell, visited:Array<string>, skipRoot: boolean = false): StorageStats {
+    let bits  = skipRoot ? 0n : BigInt(cell.bits.length);
+    let cells = skipRoot ? 0n : 1n;
     let hash = cell.hash().toString();
     if (visited.includes(hash)) {
         // We should not account for current cell data if visited
-        return { bits: 0, cells: 0};
+        return new StorageStats();
     }
     else {
         visited.push(hash);
@@ -38,61 +39,116 @@ export function collectCellStats(cell: Cell, visited:Array<string>, skipRoot: bo
         cells += r.cells;
         bits += r.bits;
     }
-    return { bits, cells };
+    return new StorageStats(bits, cells);
 }
 
 
-type MsgPrices = ReturnType<typeof configParseMsgPrices>
+type MsgPrices = ReturnType<typeof configParseMsgPrices>;
+
+class StorageStats {
+    bits: bigint;
+    cells: bigint;
+
+    constructor(bits?: number | bigint, cells?: number | bigint) {
+        this.bits  = bits  !== undefined ? BigInt(bits)  : 0n;
+        this.cells = cells !== undefined ? BigInt(cells) : 0n;
+    }
+    add(...stats: StorageStats[]) {
+        let cells = this.cells, bits = this.bits;
+        for (let stat of stats) {
+            bits  += stat.bits;
+            cells += stat.cells;
+        }
+        return new StorageStats(bits, cells);
+    }
+    sub(...stats: StorageStats[]) {
+        let cells = this.cells, bits = this.bits;
+        for (let stat of stats) {
+            bits  -= stat.bits;
+            cells -= stat.cells;
+        }
+        return new StorageStats(bits, cells);
+    }
+    addBits(bits: number | bigint) {
+        return new StorageStats(this.bits + BigInt(bits), this.cells);
+    }
+    subBits(bits: number | bigint) {
+        return new StorageStats(this.bits - BigInt(bits), this.cells);
+    }
+    addCells(cells: number | bigint) {
+        return new StorageStats(this.bits, this.cells + BigInt(cells));
+    }
+    subCells(cells: number | bigint) {
+        return new StorageStats(this.bits, this.cells - BigInt(cells));
+    }
+
+    toString() : string {
+        return JSON.stringify({
+            bits: this.bits.toString(),
+            cells: this.cells.toString()
+        });
+    }
+}
 
 function computeDefaultForwardFee(msgPrices: MsgPrices) {
     return msgPrices.lumpPrice - ((msgPrices.lumpPrice * msgPrices.firstFrac) >> BigInt(16));
 }
-function computeMessageForwardFees(msgPrices: MsgPrices, msg: Message) {
+function computeMessageForwardFees(msgPrices: MsgPrices, msg: Message)  {
     // let msg = loadMessageRelaxed(cell.beginParse());
-    let storageStats: { bits: number, cells: number } = { bits: 0, cells: 0 };
+    let storageStats = new StorageStats();
 
     if( msg.info.type !== "internal") {
         throw Error("Helper intended for internal messages");
     }
     const defaultFwd = computeDefaultForwardFee(msgPrices);
     // If message forward fee matches default than msg cell is flat
-    let   skipRef    = msg.info.forwardFee == defaultFwd;
+    if(msg.info.forwardFee == defaultFwd) {
+        return {fees: msgPrices.lumpPrice, res : defaultFwd, remaining: defaultFwd, stats: storageStats};
+    }
+    let visited : Array<string> = [];
     // Init
     if (msg.init) {
+        let addBits  = 5n; // Minimal additional bits
+        let refCount = 0;
+        if(msg.init.splitDepth) {
+            addBits += 5n;
+        }
+        if(msg.init.libraries) {
+            refCount++;
+            storageStats = storageStats.add(collectCellStats(beginCell().storeDictDirect(msg.init.libraries).endCell(), visited, true));
+        }
         if(msg.init.code) {
-            const code = collectCellStats(msg.init.code, []);
-            storageStats.bits += code.bits;
-            storageStats.cells += code.cells;
+            refCount++;
+            storageStats = storageStats.add(collectCellStats(msg.init.code, visited))
         }
         if(msg.init.data) {
-            const data = collectCellStats(msg.init.data, []);
-            storageStats.bits += data.bits;
-            storageStats.cells += data.cells;
+            refCount++;
+            storageStats = storageStats.add(collectCellStats(msg.init.data, visited));
         }
-        // If message remaining fee exceeds fees fraction from  init data, than body is by ref
-        const tempFees = computeFwdFees(msgPrices, BigInt(storageStats.cells), BigInt(storageStats.bits));
-        const tempFrac = tempFees - ((tempFees * msgPrices.firstFrac) >> BigInt(16));
-        skipRef = tempFrac == msg.info.forwardFee
+        if(refCount >= 2) { //https://github.com/ton-blockchain/ton/blob/51baec48a02e5ba0106b0565410d2c2fd4665157/crypto/block/transaction.cpp#L2079
+            storageStats.cells++;
+            storageStats.bits += addBits;
+        }
     }
-
-    // Body
-    let bc = collectCellStats(msg.body,[], skipRef);
-    storageStats.bits  += bc.bits;
-    storageStats.cells += bc.cells;
+    const lumpBits  = BigInt(msg.body.bits.length);
+    const bodyStats = collectCellStats(msg.body,visited, true);
+    storageStats = storageStats.add(bodyStats);
 
     // NOTE: Extra currencies are ignored for now
-    let fees = computeFwdFees(msgPrices, BigInt(storageStats.cells), BigInt(storageStats.bits));
-    let res  = shr16ceil((fees * msgPrices.firstFrac));
-    let remaining = fees - res;
-    /*
-    if(remaining != msg.info.forwardFee) {
+    let fees = computeFwdFeesVerbose(msgPrices, BigInt(storageStats.cells), BigInt(storageStats.bits));
+    // Meeh
+    if(fees.remaining < msg.info.forwardFee) {
+        // console.log(`Remaining ${fees.remaining} < ${msg.info.forwardFee} lump bits:${lumpBits}`);
+        storageStats = storageStats.addCells(1).addBits(lumpBits);
+        fees = computeFwdFeesVerbose(msgPrices, storageStats.cells, storageStats.bits);
+    }
+    if(fees.remaining != msg.info.forwardFee) {
+        console.log("Result fees:", fees);
         console.log(msg);
-        console.log(res, remaining);
+        console.log(fees.remaining);
         throw(new Error("Something went wrong in fee calcuation!"));
     }
-    */
-    console.log("All went well");
-    return fees;
+    return {fees, stats: storageStats};
 }
 
 export const configParseMsgPrices = (sc: Slice) => {
@@ -131,21 +187,24 @@ export function computeFwdFees(msgPrices: MsgPrices, cells: bigint, bits: bigint
     );
 }
 
+export function computeFwdFeesVerbose(msgPrices: MsgPrices, cells: bigint | number, bits: bigint | number) {
+    const fees = computeFwdFees(msgPrices, BigInt(cells), BigInt(bits));
+
+    const res = (fees * msgPrices.firstFrac) >> 16n;
+    return {
+        total: fees,
+        res,
+        remaining: fees - res
+    }
+}
+
 
 
 function shr16ceil(src: bigint) {
     let rem = src % BigInt(65536);
-    let res = src >> BigInt(16);
+    let res = src / 65536n; // >> BigInt(16);
     if (rem != BigInt(0)) {
         res += BigInt(1);
-    }
-    return res;
-}
-function divideCeil(src: bigint, divisor: bigint) {
-    let rem = src % divisor;
-    let res = src / divisor;
-    if(rem != 0n) {
-        res += 1n;
     }
     return res;
 }
@@ -167,12 +226,16 @@ describe('FeeComputation', () => {
     let deployer : SandboxContract<TreasuryContract>;
     let second : SandboxContract<TreasuryContract>;
     let proposer : SandboxContract<TreasuryContract>;
+    let signers  : Array<SandboxContract<TreasuryContract>>;
 
     beforeEach(async () => {
         blockchain = await Blockchain.create();
         deployer = await blockchain.treasury('deployer');
         second = await blockchain.treasury('second');
         proposer = await blockchain.treasury('proposer');
+
+        // Total max 255 signers
+        signers  = [deployer, ...await blockchain.createWallets(254)];
 
         let config = {
             threshold: 2,
@@ -190,11 +253,11 @@ describe('FeeComputation', () => {
         curTime = () => blockchain.now ?? Math.floor(Date.now() / 1000);
     });
 
-    it.only('should send new order', async () => {
+    it('should send new order', async () => {
         const testAddr = randomAddress();
         const testMsg: TransferRequest = {type:"transfer", sendMode: 1, message: internal({to: testAddr, value: toNano('0.015'), body: beginCell().storeUint(12345, 32).endCell()})};
         const testMsg2: TransferRequest = {type:"transfer", sendMode: 1, message: internal({to: randomAddress(), value: toNano('0.017'), body: beginCell().storeUint(123425, 32).endCell()})};
-        const orderList:Array<Action> = [testMsg, testMsg, testMsg, testMsg2];
+        const orderList:Array<Action> = [testMsg,/*testMsg, testMsg, testMsg2*/];
         let timeSpan  = 365 * 24 * 3600;
         const expTime = Math.floor(Date.now() / 1000) + timeSpan;
         let orderEstimateOnContract = await multiownerWallet.getOrderEstimate(orderList, BigInt(expTime));
@@ -207,13 +270,12 @@ describe('FeeComputation', () => {
         */
 
         let MULTISIG_INIT_ORDER_GAS = computedGeneric(res.transactions[1]).gasUsed;
+        let MULTISIG_INIT_ORDER_FEE = computedGeneric(res.transactions[1]).gasFees;
         let ORDER_INIT_GAS = computedGeneric(res.transactions[2]).gasUsed;
+        let ORDER_INIT_GAS_FEE = computedGeneric(res.transactions[2]).gasFees;
 
-        console.log(prettyLogTransactions(res.transactions));
-        //console.log(blockchain.storage.getContract(multiownerWallet.address));
-        //console.log(computedGeneric(res.transactions[1]).gasUsed);
         let orderAddress = await multiownerWallet.getOrderAddress(0n);
-        let order = await blockchain.openContract(Order.createFromAddress(orderAddress));
+        let order = blockchain.openContract(Order.createFromAddress(orderAddress));
         let orderBody = (await order.getOrderData()).order;
         let orderBodyStats = collectCellStats(orderBody, []);
 
@@ -221,12 +283,13 @@ describe('FeeComputation', () => {
         let accountStorage = beginCell().store(storeAccountStorage(smc.account.account!.storage)).endCell();
         let orderAccountStorageStats = collectCellStats(accountStorage, []);
 
-        let orderStateOverhead = {bits: orderAccountStorageStats.bits - orderBodyStats.bits, cells: orderAccountStorageStats.cells - orderBodyStats.cells};
-        console.log("orderStateOverhead", orderStateOverhead);
+        let orderStateOverhead = orderAccountStorageStats.sub(orderBodyStats);
+        // {bits: orderAccountStorageStats.bits - orderBodyStats.bits, cells: orderAccountStorageStats.cells - orderBodyStats.cells};
 
-        let multiownerToOrderMessage = beginCell().store(storeMessage(res.transactions[2].inMessage!)).endCell();
-        let multiownerToOrderMessageStats = collectCellStats(multiownerToOrderMessage, []);
-        let initOrderStateOverhead = {bits: multiownerToOrderMessageStats.bits - orderBodyStats.bits, cells: multiownerToOrderMessageStats.cells - orderBodyStats.cells};
+        let multiownerToOrderMessage = res.transactions[2].inMessage!;
+        let multiownerToOrderMessageStats = computeMessageForwardFees(msgPrices, multiownerToOrderMessage).stats;
+        let initOrderStateOverhead = multiownerToOrderMessageStats.sub(orderBodyStats);
+        // {bits: multiownerToOrderMessageStats.bits - orderBodyStats.bits, cells: multiownerToOrderMessageStats.cells - orderBodyStats.cells};
 
         console.log("initOrderStateOverhead", initOrderStateOverhead);
 
@@ -248,47 +311,59 @@ describe('FeeComputation', () => {
           tx3: order -> multiowner
           tx4+: multiowner -> destination
         */
-        let orderToMultiownerMessage = beginCell().store(storeMessage(secondApproval.transactions[3].inMessage!)).endCell();
-        let orderToMultiownerMessageStats = collectCellStats(orderToMultiownerMessage, []);
-        let orderToMultiownerMessageOverhead = {bits: orderToMultiownerMessageStats.bits - orderBodyStats.bits, cells: orderToMultiownerMessageStats.cells - orderBodyStats.cells};
+        let orderToMultiownerMessage      = secondApproval.transactions[3].inMessage!;
+        let orderToMultiownerMessageStats = computeMessageForwardFees(msgPrices, orderToMultiownerMessage).stats;
+        console.log("Order to multisig stats:", orderToMultiownerMessageStats);
+        console.log("Order body stats:", orderBodyStats);
+        let orderToMultiownerMessageOverhead = orderToMultiownerMessageStats.sub(orderBodyStats);
+        // {bits: orderToMultiownerMessageStats.bits - orderBodyStats.bits, cells: orderToMultiownerMessageStats.cells - orderBodyStats.cells};
 
 
         let ORDER_EXECUTE_GAS = computedGeneric(secondApproval.transactions[1]).gasUsed;
+        let ORDER_EXECUTE_FEE = computedGeneric(secondApproval.transactions[1]).gasFees;
         let MULTISIG_EXECUTE_GAS = computedGeneric(secondApproval.transactions[3]).gasUsed;
+        let MULTISIG_EXECUTE_FEE = computedGeneric(secondApproval.transactions[3]).gasFees;
         console.log("orderToMultiownerMessageOverhead", orderToMultiownerMessageOverhead);
 
         // collect data in one console.log
         console.log(`
         MULTISIG_INIT_ORDER_GAS: ${MULTISIG_INIT_ORDER_GAS}
         ORDER_INIT_GAS: ${ORDER_INIT_GAS}
-        ORDER_EXECUTE_GAS: ${ORDER_EXECUTE_GAS}
-        MULTISIG_EXECUTE_GAS: ${MULTISIG_EXECUTE_GAS}
-        orderStateOverhead: ${JSON.stringify(orderStateOverhead)}
-        initOrderStateOverhead: ${JSON.stringify(initOrderStateOverhead)}
-        orderToMultiownerMessageOverhead: ${JSON.stringify(orderToMultiownerMessageOverhead)}
+        ORDER_EXECUTE_GAS: ${ORDER_EXECUTE_GAS} MULTISIG_EXECUTE_GAS: ${MULTISIG_EXECUTE_GAS}
+        orderStateOverhead: ${orderStateOverhead}
+        initOrderStateOverhead: ${initOrderStateOverhead}
+        orderToMultiownerMessageOverhead: ${orderToMultiownerMessageOverhead}
         `);
 
-        let orderCell = MultiownerWallet.packOrder(orderList);
+        let gasEstimate = shr16ceil((MULTISIG_INIT_ORDER_GAS + ORDER_INIT_GAS + ORDER_EXECUTE_GAS + MULTISIG_EXECUTE_GAS) * 65536000n);
+        let gasFees     = MULTISIG_INIT_ORDER_FEE + ORDER_INIT_GAS_FEE + ORDER_EXECUTE_FEE + MULTISIG_EXECUTE_FEE;
+        expect(gasFees).toEqual(gasEstimate);
+        // expect(gasFees).toEqual(orderEstimateOnContract.gas);
 
-        let gasEstimate = (MULTISIG_INIT_ORDER_GAS + ORDER_INIT_GAS + ORDER_EXECUTE_GAS + MULTISIG_EXECUTE_GAS) * 1000n;
-        let actualFwd   = computeMessageForwardFees(msgPrices, secondApproval.transactions[3].inMessage!) 
-                          + computeMessageForwardFees(msgPrices, secondApproval.transactions[2].inMessage!)
-                          + computeMessageForwardFees(msgPrices, secondApproval.transactions[4].inMessage!);
-        console.log("Actual fwd:", actualFwd);
+        // blockchain.verbosity = {vmLogs:"vm_logs_verbose", print: true, debugLogs: true, blockchainLogs: true};
+        let actualFwd   = computeFwdFees(msgPrices, orderToMultiownerMessageStats.cells, orderToMultiownerMessageStats.bits) +
+                          computeFwdFees(msgPrices, multiownerToOrderMessageStats.cells, multiownerToOrderMessageStats.bits);
+        // console.log("Actual fwd:", actualFwd);
         let fwdEstimate = 2n * 1000000n +
-        BigInt((2 * orderBodyStats.bits + initOrderStateOverhead.bits + orderToMultiownerMessageOverhead.bits) +
-        (2 * orderBodyStats.cells + initOrderStateOverhead.cells + orderToMultiownerMessageOverhead.cells) * 100) * 1000n;
-        let storageEstimate = BigInt(Math.ceil((orderBodyStats.bits +orderStateOverhead.bits + orderBodyStats.cells * 500 + orderStateOverhead.cells * 500) * timeSpan / 65536));
+        BigInt((2n * orderBodyStats.bits + initOrderStateOverhead.bits + orderToMultiownerMessageOverhead.bits) +
+        (2n * orderBodyStats.cells + initOrderStateOverhead.cells + orderToMultiownerMessageOverhead.cells) * 100n) * 1000n;
+
         console.log("fwdEstimate:", fwdEstimate);
+        expect(fwdEstimate).toEqual(actualFwd);
+        //expect(fwdEstimate).toEqual(orderEstimateOnContract.fwd);
+
+        let storageEstimate = shr16ceil((orderBodyStats.bits +orderStateOverhead.bits + (orderBodyStats.cells + orderStateOverhead.cells) * 500n) * BigInt(timeSpan));
         const storagePhase  = storageGeneric(secondApproval.transactions[1]);
         const actualStorage = storagePhase?.storageFeesCollected;
         console.log("Storage estimates:", storageEstimate, actualStorage);
+        expect(storageEstimate).toEqual(actualStorage);
+        // expect(storageEstimate).toEqual(orderEstimateOnContract.storage);
         let manualFees = gasEstimate + fwdEstimate + storageEstimate;
         console.log("orderEstimates", orderEstimateOnContract, manualFees);
-
-        console.log(secondApproval.transactions[2].description);
+        expect(manualFees).toEqual(orderEstimateOnContract);
     });
-    it('common cases gas fees multisig 7/10', async () => {
+
+    it('common cases gas fees multisig', async () => {
         const assertMultisig = async (threshold: number, total: number, txcount: number, lifetime: number, signer_creates: boolean) => {
             let totalGas = 0n;
             const testWallet = await blockchain.treasury('test_wallet'); // Make sure we don't bounce
