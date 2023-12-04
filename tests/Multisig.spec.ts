@@ -711,6 +711,55 @@ describe('Multisig', () => {
             exitCode: Errors.multisig.singers_outdated
         });
     });
+    it('multisig should invalidate previous orders if threshold increased', async () => {
+        const dataBefore = await multisig.getMultisigData();
+        const orderAddr  = await multisig.getOrderAddress(dataBefore.nextOrderSeqno);
+        const testBody = beginCell().storeUint(0x12345, 32).endCell();
+        const testMsg: TransferRequest = {
+            type: "transfer",
+            sendMode: 1,
+            message: internal_relaxed({
+                to: multisig.address,
+                value: toNano('0.015'),
+                body: testBody
+            })
+        };
+        const updOrder : UpdateRequest = {
+            type: "update",
+            threshold: Number(dataBefore.threshold) + 1, // threshold increases
+            signers: [deployer.address], // Doesn't change
+            proposers: dataBefore.proposers
+        };
+        // First we deploy order with proposer, so it doesn't execute right away
+        let res = await multisig.sendNewOrder(proposer.getSender(), [testMsg], curTime() + 1000);
+        expect(res.transactions).toHaveTransaction({
+            from: multisig.address,
+            to: orderAddr,
+            deploy: true,
+            success: true
+        });
+        // Now lets perform threshold update
+        res = await multisig.sendNewOrder(deployer.getSender(), [updOrder], curTime() + 100);
+
+        expect(res.transactions).toHaveTransaction({
+            from: deployer.address,
+            to: multisig.address,
+            success: true
+        });
+        expect((await multisig.getMultisigData()).threshold).toEqual(dataBefore.threshold + 1n);
+
+        const orderContract = blockchain.openContract(Order.createFromAddress(orderAddr));
+        // Now let's approve old order
+        res = await orderContract.sendApprove(deployer.getSender(), 0);
+        expect(res.transactions).toHaveTransaction({
+            from: orderAddr,
+            to: multisig.address,
+            op: Op.multisig.execute,
+            aborted: true,
+            success: false,
+            exitCode: Errors.multisig.singers_outdated
+        });
+    });
     it('multisig should not execute orders deployed by other multisig contract', async () => {
         const coolHacker = await blockchain.treasury('1337');
         const newConfig : MultisigConfig = {
