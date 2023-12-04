@@ -135,6 +135,8 @@ cell modules, cell guard) impure {
         ;; signers dict
 
         int order_seqno = in_msg_body~load_order_seqno();
+        int expiration_date = in_msg_body~load_timestamp();
+        int approvals_collected = in_msg_body~load_index();
         int signers_hash = in_msg_body~load_hash();
         cell order_body = in_msg_body~load_ref();
 
@@ -142,7 +144,8 @@ cell modules, cell guard) impure {
         slice order_address = calculate_address_by_state_init(BASECHAIN, state_init);
 
         throw_unless(error::unauthorized_execute, equal_slice_bits(sender, order_address));
-        throw_unless(error::singers_outdated, signers_hash == signers.cell_hash());
+        throw_unless(error::singers_outdated, (signers_hash == signers.cell_hash()) & (approvals_collected >= threshold));
+        throw_unless(error::expired, expiration_date > now());
 
         (threshold, signers, signers_num,
             proposers, modules, guard)~execute_order(order_body);
@@ -178,7 +181,7 @@ cell modules, cell guard) impure {
         modules, guard);
 }
 
-(int, int, cell, cell, cell, cell) get_multiowner_data() method_id  {
+(int, int, cell, cell, cell, cell) get_multisig_data() method_id  {
     (int next_order_seqno, int threshold,
         cell signers, int signers_num,
         cell proposers,

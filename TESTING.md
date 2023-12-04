@@ -93,7 +93,7 @@ For instance, prevent forbidden actions from execution.(?)
 ### Initialization
 
 - Order contract should only be able to initialize once.
-- Order contract should accept initialization messages from `multiowner` address.
+- Order contract should only accept initialization messages from `multiowner` address.
 - Execution threshold should be set according to init message.
 - Signers list should be set according to init message.
 - Expiration date should exceed current timestamp(Should not be expired at the time of receiving a message).
@@ -112,6 +112,8 @@ In case approval is granted, bit is set in `approvals` mask in accordance with s
 
 For approval to be granted:  
 
+- Sender address should be present in `signers` list.
+- Signer index specified in message, should match sender address position at `signers` list.
 - Order should not be expired (`expiration_date < now()`).
 - Order can only be executed once `executed` field should be `false`.
 - Signer at specified index in `approvals` mask has not granted approval yet.(`error::already_approved`)

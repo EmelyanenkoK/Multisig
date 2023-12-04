@@ -1,8 +1,8 @@
 import { Blockchain, SandboxContract, TreasuryContract, prettyLogTransactions, BlockchainTransaction } from '@ton/sandbox';
 import { beginCell, Cell, internal, toNano, Transaction, storeAccountStorage, storeMessage, Slice, Message, Dictionary, storeStateInit } from '@ton/core';
-import { MultiownerWallet, TransferRequest, Action, MultiownerWalletConfig } from '../wrappers/MultiownerWallet';
+import { Multisig, TransferRequest, Action, MultisigConfig } from '../wrappers/Multisig';
 import { Order } from '../wrappers/Order';
-import { Op } from '../Constants';
+import { Op } from '../wrappers/Constants';
 import '@ton/test-utils';
 import { compile } from '@ton/blueprint';
 import { randomAddress } from '@ton/test-utils';
@@ -210,19 +210,19 @@ function shr16ceil(src: bigint) {
 }
 
 describe('FeeComputation', () => {
-    let multiowner_code: Cell;
+    let multisig_code: Cell;
     let order_code: Cell;
     let msgPrices: MsgPrices;
 
     let curTime : () => number;
 
     beforeAll(async () => {
-        multiowner_code = await compile('MultiownerWallet');
+        multisig_code = await compile('Multisig');
         order_code = await compile('Order');
     });
 
     let blockchain: Blockchain;
-    let multiownerWallet: SandboxContract<MultiownerWallet>;
+    let multisigWallet: SandboxContract<Multisig>;
     let deployer : SandboxContract<TreasuryContract>;
     let second : SandboxContract<TreasuryContract>;
     let proposer : SandboxContract<TreasuryContract>;
@@ -245,10 +245,10 @@ describe('FeeComputation', () => {
             guard: null,
         };
 
-        multiownerWallet = blockchain.openContract(MultiownerWallet.createFromConfig(config, multiowner_code));
+        multisigWallet = blockchain.openContract(Multisig.createFromConfig(config, multisig_code));
         msgPrices        = getMsgPrices(blockchain.config, 0);
 
-        const deployResult = await multiownerWallet.sendDeploy(deployer.getSender(), toNano('0.05'));
+        const deployResult = await multisigWallet.sendDeploy(deployer.getSender(), toNano('0.05'));
 
         curTime = () => blockchain.now ?? Math.floor(Date.now() / 1000);
     });
@@ -260,13 +260,13 @@ describe('FeeComputation', () => {
         const orderList:Array<Action> = [testMsg,/*testMsg, testMsg, testMsg2*/];
         let timeSpan  = 365 * 24 * 3600;
         const expTime = Math.floor(Date.now() / 1000) + timeSpan;
-        let orderEstimateOnContract = await multiownerWallet.getOrderEstimate(orderList, BigInt(expTime));
-        const res = await multiownerWallet.sendNewOrder(deployer.getSender(), orderList, expTime);
+        let orderEstimateOnContract = await multisigWallet.getOrderEstimate(orderList, BigInt(expTime));
+        const res = await multisigWallet.sendNewOrder(deployer.getSender(), orderList, expTime);
 
         /*
           tx0 : external -> treasury
-          tx1: treasury -> multiowner
-          tx2: multiowner -> order
+          tx1: treasury -> multisig
+          tx2: multisig -> order
         */
 
         let MULTISIG_INIT_ORDER_GAS = computedGeneric(res.transactions[1]).gasUsed;
@@ -274,7 +274,7 @@ describe('FeeComputation', () => {
         let ORDER_INIT_GAS = computedGeneric(res.transactions[2]).gasUsed;
         let ORDER_INIT_GAS_FEE = computedGeneric(res.transactions[2]).gasFees;
 
-        let orderAddress = await multiownerWallet.getOrderAddress(0n);
+        let orderAddress = await multisigWallet.getOrderAddress(0n);
         let order = blockchain.openContract(Order.createFromAddress(orderAddress));
         let orderBody = (await order.getOrderData()).order;
         let orderBodyStats = collectCellStats(orderBody, []);
@@ -286,10 +286,10 @@ describe('FeeComputation', () => {
         let orderStateOverhead = orderAccountStorageStats.sub(orderBodyStats);
         // {bits: orderAccountStorageStats.bits - orderBodyStats.bits, cells: orderAccountStorageStats.cells - orderBodyStats.cells};
 
-        let multiownerToOrderMessage = res.transactions[2].inMessage!;
-        let multiownerToOrderMessageStats = computeMessageForwardFees(msgPrices, multiownerToOrderMessage).stats;
-        let initOrderStateOverhead = multiownerToOrderMessageStats.sub(orderBodyStats);
-        // {bits: multiownerToOrderMessageStats.bits - orderBodyStats.bits, cells: multiownerToOrderMessageStats.cells - orderBodyStats.cells};
+        let multisigToOrderMessage = res.transactions[2].inMessage!;
+        let multisigToOrderMessageStats = computeMessageForwardFees(msgPrices, multisigToOrderMessage).stats;
+        let initOrderStateOverhead = multisigToOrderMessageStats.sub(orderBodyStats);
+        // {bits: multisigToOrderMessageStats.bits - orderBodyStats.bits, cells: multisigToOrderMessageStats.cells - orderBodyStats.cells};
 
         console.log("initOrderStateOverhead", initOrderStateOverhead);
 
@@ -299,7 +299,7 @@ describe('FeeComputation', () => {
 
         expect(secondApproval.transactions).toHaveTransaction({
             from: order.address,
-            to: multiownerWallet.address,
+            to: multisigWallet.address,
             success: true,
         });
 
@@ -308,8 +308,8 @@ describe('FeeComputation', () => {
           tx0 : external -> treasury
           tx1: treasury -> order
           tx2: order -> treasury (approve)
-          tx3: order -> multiowner
-          tx4+: multiowner -> destination
+          tx3: order -> multisig
+          tx4+: multisig -> destination
         */
         let orderToMultiownerMessage      = secondApproval.transactions[3].inMessage!;
         let orderToMultiownerMessageStats = computeMessageForwardFees(msgPrices, orderToMultiownerMessage).stats;
@@ -342,7 +342,7 @@ describe('FeeComputation', () => {
 
         // blockchain.verbosity = {vmLogs:"vm_logs_verbose", print: true, debugLogs: true, blockchainLogs: true};
         let actualFwd   = computeFwdFees(msgPrices, orderToMultiownerMessageStats.cells, orderToMultiownerMessageStats.bits) +
-                          computeFwdFees(msgPrices, multiownerToOrderMessageStats.cells, multiownerToOrderMessageStats.bits);
+                          computeFwdFees(msgPrices, multisigToOrderMessageStats.cells, multisigToOrderMessageStats.bits);
         // console.log("Actual fwd:", actualFwd);
         let fwdEstimate = 2n * 1000000n +
         BigInt((2n * orderBodyStats.bits + initOrderStateOverhead.bits + orderToMultiownerMessageOverhead.bits) +
@@ -368,7 +368,7 @@ describe('FeeComputation', () => {
             let totalGas = 0n;
             const testWallet = await blockchain.treasury('test_wallet'); // Make sure we don't bounce
             const signers = await blockchain.createWallets(total);
-            const config : MultiownerWalletConfig = {
+            const config : MultisigConfig = {
                 threshold,
                 signers : signers.map(x => x.address),
                 proposers: [proposer.address],
@@ -376,7 +376,7 @@ describe('FeeComputation', () => {
                 guard: null
             };
 
-            const multisig = blockchain.openContract(MultiownerWallet.createFromConfig(config, multiowner_code));
+            const multisig = blockchain.openContract(Multisig.createFromConfig(config, multisig_code));
 
 
             const creator   = signer_creates ? signers[0] : proposer;
@@ -389,7 +389,7 @@ describe('FeeComputation', () => {
                 success: true
             });
 
-            const dataBefore   = await multisig.getMultiownerData();
+            const dataBefore   = await multisig.getMultisigData();
             const initSeqno    = dataBefore.nextOrderSeqno;
             const orderContract = blockchain.openContract(Order.createFromAddress(await multisig.getOrderAddress(initSeqno)));
 
@@ -423,7 +423,7 @@ describe('FeeComputation', () => {
             expect(res.transactions).toHaveTransaction({
                 from: orderContract.address,
                 to: multisig.address,
-                op: Op.multiowner.execute,
+                op: Op.multisig.execute,
                 success: true
             });
             expect(res.transactions).toHaveTransaction({
