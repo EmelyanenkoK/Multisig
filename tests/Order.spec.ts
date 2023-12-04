@@ -83,24 +83,23 @@ describe('Order', () => {
     });
 
     it('should only accept init message from multisig', async () => {
-        const testAddr = differentAddress(multisig.address);
 
         const newOrder = blockchain.openContract(Order.createFromConfig({
             multisig: multisig.address,
-            orderSeqno: 1 // Next
+            orderSeqno: 1234 // Next
         }, code));
 
         const expDate =  blockchain.now! + 1000;
 
-        let res = await newOrder.sendDeploy(blockchain.sender(testAddr), toNano('1'), signers.map(s => s.address), expDate, mockOrder, threshold);
+        const testSender = await blockchain.treasury('totally_not_multisig');
+        let res = await newOrder.sendDeploy(testSender.getSender(), toNano('1'), signers.map(s => s.address), expDate, mockOrder, threshold);
 
         expect(res.transactions).toHaveTransaction({
-            from: testAddr,
+            from: testSender.address,
             to: newOrder.address,
             success: false,
             aborted: true,
-            endStatus: x => x! !== 'active'
-            // exitCode: Errors.order.unauthorized_init can't check due to lack of compute phase
+            exitCode: Errors.order.unauthorized_init
         });
 
         // Now retry with legit multisig should succeed
@@ -113,9 +112,7 @@ describe('Order', () => {
         expect(res.transactions).toHaveTransaction({
             from: multisig.address,
             to: newOrder.address,
-            deploy: true,
             success: true,
-            endStatus: 'active'
         });
 
         const dataAfter = await newOrder.getOrderData();
@@ -125,7 +122,7 @@ describe('Order', () => {
     it('should reject already expired init message', async () => {
         const newOrder = blockchain.openContract(Order.createFromConfig({
             multisig: multisig.address,
-            orderSeqno: 1 // Next
+            orderSeqno: 123 // Next
         }, code));
         const expDate = blockchain.now! - 1;
 
