@@ -277,7 +277,7 @@ describe('FeeComputation', () => {
         let orderAddress = await multisigWallet.getOrderAddress(0n);
         let order = blockchain.openContract(Order.createFromAddress(orderAddress));
         let orderBody = (await order.getOrderData()).order;
-        let orderBodyStats = collectCellStats(orderBody, []);
+        let orderBodyStats = collectCellStats(orderBody!, []);
 
         let smc = await blockchain.getContract(orderAddress);
         let accountStorage = beginCell().store(storeAccountStorage(smc.account.account!.storage)).endCell();
