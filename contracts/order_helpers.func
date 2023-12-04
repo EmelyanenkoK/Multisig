@@ -49,15 +49,15 @@ const int CONFIG::basechain_fwd_prices = 25;
 }
 
 const int MULTISIG_INIT_ORDER_GAS = 17053; ;; 255 signers
-const int ORDER_INIT_GAS = 4727;
-const int ORDER_EXECUTE_GAS = 9676;
-const int MULTISIG_EXECUTE_GAS = 9022; ;; For single transfer action order
+const int ORDER_INIT_GAS = 5128;
+const int ORDER_EXECUTE_GAS = 10075;
+const int MULTISIG_EXECUTE_GAS = 9432; ;; For single transfer action order
 ;; we call number of bits/cells without order bits/cells as "overhead"
-const int INIT_ORDER_BIT_OVERHEAD = 4470;
-const int INIT_ORDER_CELL_OVERHEAD = 19;
-const int ORDER_STATE_BIT_OVERHEAD = 4901;
-const int ORDER_STATE_CELL_OVERHEAD = 19;
-const int EXECUTE_ORDER_BIT_OVERHEAD = 384;
+const int INIT_ORDER_BIT_OVERHEAD = 5166;
+const int INIT_ORDER_CELL_OVERHEAD = 21;
+const int ORDER_STATE_BIT_OVERHEAD = 5597;
+const int ORDER_STATE_CELL_OVERHEAD = 21;
+const int EXECUTE_ORDER_BIT_OVERHEAD = 440;
 const int EXECUTE_ORDER_CELL_OVERHEAD = 1;
 
 int flat_gas_wrapper(int flat_gas_limit, int flat_gas_price, int gas_price, int gas) {
