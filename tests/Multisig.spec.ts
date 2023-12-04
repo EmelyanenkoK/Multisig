@@ -4,7 +4,7 @@ import { Action, Multisig, MultisigConfig, TransferRequest, UpdateRequest } from
 import { Order } from '../wrappers/Order';
 import '@ton/test-utils';
 import { compile } from '@ton/blueprint';
-import { randomAddress, findTransactionRequired } from '@ton/test-utils';
+import { randomAddress, findTransactionRequired, executeTill, findTransaction, executeFrom } from '@ton/test-utils';
 import { Op, Errors } from '../wrappers/Constants';
 import { getRandomInt, differentAddress} from './utils';
 
@@ -290,6 +290,70 @@ describe('Multisig', () => {
             to: testAddr,
             value: toNano('0.015'),
             body: testMsg.message.body
+        });
+    });
+    it('expired order execution should be denied', async () => {
+        let initialSeqno = (await multisig.getMultisigData()).nextOrderSeqno;
+        blockchain.now   = curTime() + 1;
+        const deployRes = await multisig.sendNewOrder(proposer.getSender(), [testMsg], blockchain.now + 1);
+        let orderAddress = await multisig.getOrderAddress(initialSeqno);
+        expect(deployRes.transactions).toHaveTransaction({
+            from: multisig.address,
+            on: orderAddress,
+            op: Op.order.init,
+            deploy: true,
+            success: true
+        });
+        // Some time passed after init
+        blockchain.now++;
+        let txIter = await blockchain.sendMessageIter(internal({
+                from: deployer.address,
+                to: orderAddress,
+                value: toNano('1'),
+                body: beginCell().storeUint(Op.order.approve, 32).storeUint(0, 64).storeUint(0,8).endCell()
+        }));
+
+        const orderContract = blockchain.openContract(Order.createFromAddress(orderAddress));
+
+        let txs = await executeTill(txIter,{
+            from: orderAddress,
+            on: deployer.address,
+            op: Op.order.approved,
+            success: true,
+        });
+
+        findTransactionRequired(txs, {
+            from: deployer.address,
+            on: orderAddress,
+            op: Op.order.approve,
+            success: true,
+            outMessagesCount: 2 // Make sure both approval notification and exec message is produced
+        });
+        // Make sure exec transaction is not yet proccessed
+        expect(findTransaction(txs, {
+            from: orderAddress,
+            on: multisig.address,
+            op: Op.multisig.execute
+        })).not.toBeDefined();
+        // While message was in transit, some more time passed
+        blockchain.now++;
+        // Continue execution
+        txs = await executeFrom(txIter);
+        // Execute message was sent, but failed due to expiery
+        expect(txs).toHaveTransaction({
+            from: orderAddress,
+            on: multisig.address,
+            op: Op.multisig.execute,
+            success: false,
+            aborted: true,
+            exitCode: Errors.order.expired
+        });
+        expect((await orderContract.getOrderData()).executed).toBe(true);
+        // Double check that order has not been executed.
+        expect(txs).not.toHaveTransaction({
+            from: multisig.address,
+            on: testAddr,
+            op: 12345
         });
     });
     it('should be possible to execute order by post init approval', async () => {

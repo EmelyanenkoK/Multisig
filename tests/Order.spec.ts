@@ -115,7 +115,35 @@ describe('Order', () => {
             endStatus: 'active'
         });
     });
+    it('should reject already expired init message', async () => {
+        const newOrder = blockchain.openContract(Order.createFromConfig({
+            multisig: multisig.address,
+            orderSeqno: 1 // Next
+        }, code));
+        const expDate = blockchain.now! - 1;
 
+        let res = await newOrder.sendDeploy(multisig.getSender(), toNano('1'), signers.map(s => s.address), expDate, mockOrder, threshold);
+
+        expect(res.transactions).toHaveTransaction({
+            from: multisig.address,
+            on: newOrder.address,
+            op: Op.order.init,
+            success: false,
+            aborted: true,
+            endStatus: x => x! !== 'active'
+        });
+
+        // now == expiration_date should be allowed (currently not allowed).
+        res = await newOrder.sendDeploy(multisig.getSender(), toNano('1'), signers.map(s => s.address), blockchain.now!, mockOrder, threshold);
+
+        expect(res.transactions).toHaveTransaction({
+            from: multisig.address,
+            on: newOrder.address,
+            op: Op.order.init,
+            success: true,
+            endStatus: 'active'
+        });
+    });
     it('order contract should accept init message only once', async () => {
         const expDate = blockchain.now! + 1000;
         const newSigners = await blockchain.createWallets(10);
