@@ -112,21 +112,27 @@ export class Order implements Contract {
        const { stack } = await provider.get("get_order_data", []);
        const multisig = stack.readAddress();
        const order_seqno = stack.readBigNumber();
-       const threshold = stack.readNumber();
-       const executed = stack.readBoolean();
-       const signers = cellToArray(stack.readCell());
-       const signers_num = stack.readNumber();
-       const approvals = stack.readBigNumber();
-       const approvals_num = stack.readNumber();
-       const expiration_date = stack.readBigNumber();
-       const order = stack.readCell();
-       let approvalsArray: Array<boolean> = Array(signers_num);
-       for(let i = 0; i < signers_num; i++) {
-           approvalsArray[i] = Boolean((1n << BigInt(i)) & approvals);
+       const threshold = stack.readNumberOpt();
+       const executed = stack.readBooleanOpt();
+       const signers = cellToArray(stack.readCellOpt());
+       const signers_num = stack.readNumberOpt();
+       const approvals = stack.readBigNumberOpt();
+       const approvals_num = stack.readNumberOpt();
+       const expiration_date = stack.readBigNumberOpt();
+       const order = stack.readCellOpt();
+       let approvalsArray: Array<boolean>;
+       if(signers_num !== null && approvals !== null) {
+        approvalsArray = Array(signers_num);
+        for(let i = 0; i < signers_num; i++) {
+            approvalsArray[i] = Boolean((1n << BigInt(i)) & approvals);
+        }
+       }
+       else {
+           approvalsArray = [];
        }
        return {
-              multisig, order_seqno, threshold, executed, signers, signers_num,
-                approvals: approvalsArray, approvals_num, _approvals: approvals, expiration_date, order
+              inited: threshold !== null, multisig, order_seqno, threshold, executed, signers, signers_num,
+              approvals: approvalsArray, approvals_num: approvals_num, _approvals : approvals, expiration_date, order
        };
     }
 }

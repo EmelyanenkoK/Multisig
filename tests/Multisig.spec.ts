@@ -4,9 +4,9 @@ import { Action, Multisig, MultisigConfig, TransferRequest, UpdateRequest } from
 import { Order } from '../wrappers/Order';
 import '@ton/test-utils';
 import { compile } from '@ton/blueprint';
-import { randomAddress, findTransactionRequired } from '@ton/test-utils';
+import { randomAddress, findTransactionRequired, findTransaction} from '@ton/test-utils';
 import { Op, Errors } from '../wrappers/Constants';
-import { getRandomInt, differentAddress} from './utils';
+import { getRandomInt, differentAddress, Txiterator, executeTill, executeFrom} from './utils';
 
 describe('Multisig', () => {
     let code: Cell;
@@ -290,6 +290,70 @@ describe('Multisig', () => {
             to: testAddr,
             value: toNano('0.015'),
             body: testMsg.message.body
+        });
+    });
+    it('expired order execution should be denied', async () => {
+        let initialSeqno = (await multisig.getMultisigData()).nextOrderSeqno;
+        blockchain.now   = curTime();
+        const deployRes  = await multisig.sendNewOrder(proposer.getSender(), [testMsg], blockchain.now + 1);
+        let orderAddress = await multisig.getOrderAddress(initialSeqno);
+        expect(deployRes.transactions).toHaveTransaction({
+            from: multisig.address,
+            on: orderAddress,
+            op: Op.order.init,
+            deploy: true,
+            success: true
+        });
+        // Some time passed after init
+        blockchain.now++;
+        let txIter = new Txiterator(blockchain,internal({
+                from: deployer.address,
+                to: orderAddress,
+                value: toNano('1'),
+                body: beginCell().storeUint(Op.order.approve, 32).storeUint(0, 64).storeUint(0,8).endCell()
+        }));
+
+        const orderContract = blockchain.openContract(Order.createFromAddress(orderAddress));
+
+        let txs = await executeTill(txIter,{
+            from: orderAddress,
+            on: deployer.address,
+            op: Op.order.approved,
+            success: true,
+        });
+
+        findTransactionRequired(txs, {
+            from: deployer.address,
+            on: orderAddress,
+            op: Op.order.approve,
+            success: true,
+            outMessagesCount: 2 // Make sure both approval notification and exec message is produced
+        });
+        // Make sure exec transaction is not yet proccessed
+        expect(findTransaction(txs, {
+            from: orderAddress,
+            on: multisig.address,
+            op: Op.multisig.execute
+        })).not.toBeDefined();
+        // While message was in transit, some more time passed
+        blockchain.now++;
+        // Continue execution
+        txs = await executeFrom(txIter);
+        // Execute message was sent, but failed due to expiery
+        expect(txs).toHaveTransaction({
+            from: orderAddress,
+            on: multisig.address,
+            op: Op.multisig.execute,
+            success: false,
+            aborted: true,
+            exitCode: Errors.order.expired
+        });
+        expect((await orderContract.getOrderData()).executed).toBe(true);
+        // Double check that order has not been executed.
+        expect(txs).not.toHaveTransaction({
+            from: multisig.address,
+            on: testAddr,
+            op: 12345
         });
     });
     it('should be possible to execute order by post init approval', async () => {
@@ -634,6 +698,55 @@ describe('Multisig', () => {
             success: true
         });
         expect((await multisig.getMultisigData()).signers[0]).not.toEqualAddress(dataBefore.signers[0]);
+
+        const orderContract = blockchain.openContract(Order.createFromAddress(orderAddr));
+        // Now let's approve old order
+        res = await orderContract.sendApprove(deployer.getSender(), 0);
+        expect(res.transactions).toHaveTransaction({
+            from: orderAddr,
+            to: multisig.address,
+            op: Op.multisig.execute,
+            aborted: true,
+            success: false,
+            exitCode: Errors.multisig.singers_outdated
+        });
+    });
+    it('multisig should invalidate previous orders if threshold increased', async () => {
+        const dataBefore = await multisig.getMultisigData();
+        const orderAddr  = await multisig.getOrderAddress(dataBefore.nextOrderSeqno);
+        const testBody = beginCell().storeUint(0x12345, 32).endCell();
+        const testMsg: TransferRequest = {
+            type: "transfer",
+            sendMode: 1,
+            message: internal_relaxed({
+                to: multisig.address,
+                value: toNano('0.015'),
+                body: testBody
+            })
+        };
+        const updOrder : UpdateRequest = {
+            type: "update",
+            threshold: Number(dataBefore.threshold) + 1, // threshold increases
+            signers: [deployer.address], // Doesn't change
+            proposers: dataBefore.proposers
+        };
+        // First we deploy order with proposer, so it doesn't execute right away
+        let res = await multisig.sendNewOrder(proposer.getSender(), [testMsg], curTime() + 1000);
+        expect(res.transactions).toHaveTransaction({
+            from: multisig.address,
+            to: orderAddr,
+            deploy: true,
+            success: true
+        });
+        // Now lets perform threshold update
+        res = await multisig.sendNewOrder(deployer.getSender(), [updOrder], curTime() + 100);
+
+        expect(res.transactions).toHaveTransaction({
+            from: deployer.address,
+            to: multisig.address,
+            success: true
+        });
+        expect((await multisig.getMultisigData()).threshold).toEqual(dataBefore.threshold + 1n);
 
         const orderContract = blockchain.openContract(Order.createFromAddress(orderAddr));
         // Now let's approve old order

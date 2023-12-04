@@ -10,7 +10,7 @@
         "@ton/blueprint": "^0.12.0",
         "@ton/core": "^0.53.0",
         "@ton/crypto": "^3.2.0",
-        "@ton/sandbox": "^0.11.0",
+        "@ton/sandbox": "^0.13.1",
         "@ton/test-utils": "^0.4.2",
         "@ton/ton": "~13.9.0",
         "@types/jest": "^29.5.0",

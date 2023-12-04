@@ -83,39 +83,79 @@ describe('Order', () => {
     });
 
     it('should only accept init message from multisig', async () => {
-        const testAddr = differentAddress(multisig.address);
 
         const newOrder = blockchain.openContract(Order.createFromConfig({
             multisig: multisig.address,
-            orderSeqno: 1 // Next
+            orderSeqno: 1234 // Next
         }, code));
 
         const expDate =  blockchain.now! + 1000;
 
-        let res = await newOrder.sendDeploy(blockchain.sender(testAddr), toNano('1'), signers.map(s => s.address), expDate, mockOrder, threshold);
+        const testSender = await blockchain.treasury('totally_not_multisig');
+        let res = await newOrder.sendDeploy(testSender.getSender(), toNano('1'), signers.map(s => s.address), expDate, mockOrder, threshold);
 
         expect(res.transactions).toHaveTransaction({
-            from: testAddr,
+            from: testSender.address,
             to: newOrder.address,
             success: false,
             aborted: true,
-            endStatus: x => x! !== 'active'
-            // exitCode: Errors.order.unauthorized_init can't check due to lack of compute phase
+            exitCode: Errors.order.unauthorized_init
         });
 
         // Now retry with legit multisig should succeed
+        const dataBefore = await newOrder.getOrderData();
+        expect(dataBefore.inited).toBe(false);
+        expect(dataBefore.threshold).toBe(null);
 
         res = await newOrder.sendDeploy(multisig.getSender(), toNano('1'), signers.map(s => s.address), expDate, mockOrder, threshold);
 
         expect(res.transactions).toHaveTransaction({
             from: multisig.address,
             to: newOrder.address,
-            deploy: true,
             success: true,
-            endStatus: 'active'
         });
-    });
 
+        const dataAfter = await newOrder.getOrderData();
+        expect(dataAfter.inited).toBe(true);
+        expect(dataAfter.threshold).toEqual(threshold);
+    });
+    it('should reject already expired init message', async () => {
+        const newOrder = blockchain.openContract(Order.createFromConfig({
+            multisig: multisig.address,
+            orderSeqno: 123 // Next
+        }, code));
+        const expDate = blockchain.now! - 1;
+
+        let res = await newOrder.sendDeploy(multisig.getSender(), toNano('1'), signers.map(s => s.address), expDate, mockOrder, threshold);
+
+        expect(res.transactions).toHaveTransaction({
+            from: multisig.address,
+            on: newOrder.address,
+            op: Op.order.init,
+            success: false,
+            aborted: true,
+            deploy: true,
+            exitCode: Errors.order.expired
+        });
+
+        const dataBefore = await newOrder.getOrderData();
+        expect(dataBefore.inited).toBe(false);
+        expect(dataBefore.threshold).toBe(null);
+
+        // now == expiration_date should be allowed (currently not allowed).
+        res = await newOrder.sendDeploy(multisig.getSender(), toNano('1'), signers.map(s => s.address), blockchain.now!, mockOrder, threshold);
+
+        expect(res.transactions).toHaveTransaction({
+            from: multisig.address,
+            on: newOrder.address,
+            op: Op.order.init,
+            success: true,
+        });
+
+        const dataAfter = await newOrder.getOrderData();
+        expect(dataAfter.inited).toBe(true);
+        expect(dataAfter.threshold).toEqual(threshold);
+    });
     it('order contract should accept init message only once', async () => {
         const expDate = blockchain.now! + 1000;
         const newSigners = await blockchain.createWallets(10);
@@ -192,6 +232,7 @@ describe('Order', () => {
         let   signerIdx  = 0;
         let signer     = signers[signerIdx];
         let dataBefore = await orderContract.getOrderData();
+        expect(dataBefore.inited).toBe(true);
         let res = await blockchain.sendMessage(internal({
                 from: signer.address,
                 to: orderContract.address,
@@ -206,8 +247,8 @@ describe('Order', () => {
         });
         let dataAfter  = await orderContract.getOrderData();
 
-        expect(dataAfter.approvals_num).toEqual(dataBefore.approvals_num + 1);
-        expect(dataAfter._approvals).toBeGreaterThan(dataBefore._approvals);
+        expect(dataAfter.approvals_num).toEqual(dataBefore.approvals_num! + 1);
+        expect(dataAfter._approvals).toBeGreaterThan(dataBefore._approvals!);
         expect(dataAfter.approvals[signerIdx]).toBe(true);
 
         dataBefore = dataAfter;
@@ -337,8 +378,9 @@ describe('Order', () => {
             });
             let dataAfter  = await orderContract.getOrderData();
 
-            expect(dataAfter.approvals_num).toEqual(dataBefore.approvals_num + 1);
-            expect(dataAfter._approvals).toBeGreaterThan(dataBefore._approvals);
+            expect(dataAfter.inited).toBe(true);
+            expect(dataAfter.approvals_num).toEqual(dataBefore.approvals_num! + 1);
+            expect(dataAfter._approvals).toBeGreaterThan(dataBefore._approvals!);
             expect(dataAfter.approvals[signerIdx]).toBe(true);
 
             dataBefore = dataAfter;
@@ -377,11 +419,12 @@ describe('Order', () => {
         }
 
         let dataAfter = await orderContract.getOrderData();
+        expect(dataAfter.inited).toBe(true);
         expect(dataAfter.approvals_num).toBe(4);
 
         // Now last one is late
 
-        blockchain.now = Number(dataAfter.expiration_date + 1n);
+        blockchain.now = Number(dataAfter.expiration_date! + 1n);
 
         // Pick at random
         const signerIdx  = getRandomInt(threshold - 1, signers.length - 1);
