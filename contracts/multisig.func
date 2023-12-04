@@ -106,7 +106,7 @@ cell modules, cell guard) impure {
         (slice expected_address, int found?) = (signer? ? signers : proposers).udict_get?(8, index);
         throw_unless(error::unauthorized_new_order, found?);
         throw_unless(error::unauthorized_new_order, equal_slice_bits(sender, expected_address));
-        throw_unless(error::expired, expiration_date > now());
+        throw_unless(error::expired, expiration_date >= now());
 
 
         int minimal_value = calculate_order_processing_cost(order_body, expiration_date - now());
@@ -145,7 +145,7 @@ cell modules, cell guard) impure {
 
         throw_unless(error::unauthorized_execute, equal_slice_bits(sender, order_address));
         throw_unless(error::singers_outdated, (signers_hash == signers.cell_hash()) & (approvals_collected >= threshold));
-        throw_unless(error::expired, expiration_date > now());
+        throw_unless(error::expired, expiration_date >= now());
 
         (threshold, signers, signers_num,
             proposers, modules, guard)~execute_order(order_body);

@@ -451,4 +451,38 @@ describe('FeeComputation', () => {
         console.log("Multisig 1/3 1 transfer 1 week signer:", gas3);
         console.log("Multisig 7/10 100 transfer 1 week proposer:", gas4);
     });
+
+    it('should be enough for 75 years', async () => {
+        const testAddr = randomAddress();
+        const testMsg: TransferRequest = {type:"transfer", sendMode: 1, message: internal({to: testAddr, value: toNano('0.015'), body: beginCell().storeUint(12345, 32).endCell()})};
+        const testMsg2: TransferRequest = {type:"transfer", sendMode: 1, message: internal({to: randomAddress(), value: toNano('0.017'), body: beginCell().storeUint(123425, 32).endCell()})};
+        const orderList:Array<Action> = [testMsg];
+        let timeSpan  = 365 * 24 * 3600 * 75;
+        const expTime = Math.floor(Date.now() / 1000) + timeSpan;
+        let orderEstimateOnContract = await multisigWallet.getOrderEstimate(orderList, BigInt(expTime));
+        const res = await multisigWallet.sendNewOrder(deployer.getSender(), orderList, expTime, orderEstimateOnContract + 1n);
+
+        let orderAddress = await multisigWallet.getOrderAddress(0n);
+        let order = blockchain.openContract(Order.createFromAddress(orderAddress));
+
+        expect(res.transactions).toHaveTransaction({
+            from: multisigWallet.address,
+            to: order.address,
+            success: true,
+        });
+
+        const firstApproval = await order.sendApprove(deployer.getSender(), 0);
+        blockchain.now = expTime - 10;
+        const secondApproval = await order.sendApprove(second.getSender(), 1);
+
+        expect(secondApproval.transactions).toHaveTransaction({
+            from: order.address,
+            to: multisigWallet.address
+        });
+
+        const storagePhase  = storageGeneric(secondApproval.transactions[1]);
+        const actualStorage = storagePhase?.storageFeesCollected;
+        console.log("Storage estimates:", actualStorage);
+    });
+
 });

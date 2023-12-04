@@ -97,7 +97,7 @@
         approvals = 0;
         approvals_num = 0;
         expiration_date = in_msg_body~load_timestamp();
-        throw_unless(error::expired, expiration_date > now());
+        throw_unless(error::expired, expiration_date >= now());
         order = in_msg_body~load_ref();
         int approve_on_init? = in_msg_body~load_bool();
         if (approve_on_init?) {
