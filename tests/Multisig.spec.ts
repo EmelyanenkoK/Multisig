@@ -4,9 +4,9 @@ import { Action, Multisig, MultisigConfig, TransferRequest, UpdateRequest } from
 import { Order } from '../wrappers/Order';
 import '@ton/test-utils';
 import { compile } from '@ton/blueprint';
-import { randomAddress, findTransactionRequired, executeTill, findTransaction, executeFrom } from '@ton/test-utils';
+import { randomAddress, findTransactionRequired, findTransaction} from '@ton/test-utils';
 import { Op, Errors } from '../wrappers/Constants';
-import { getRandomInt, differentAddress} from './utils';
+import { getRandomInt, differentAddress, Txiterator, executeTill, executeFrom} from './utils';
 
 describe('Multisig', () => {
     let code: Cell;
@@ -294,8 +294,8 @@ describe('Multisig', () => {
     });
     it('expired order execution should be denied', async () => {
         let initialSeqno = (await multisig.getMultisigData()).nextOrderSeqno;
-        blockchain.now   = curTime() + 1;
-        const deployRes = await multisig.sendNewOrder(proposer.getSender(), [testMsg], blockchain.now + 1);
+        blockchain.now   = curTime();
+        const deployRes  = await multisig.sendNewOrder(proposer.getSender(), [testMsg], blockchain.now + 1);
         let orderAddress = await multisig.getOrderAddress(initialSeqno);
         expect(deployRes.transactions).toHaveTransaction({
             from: multisig.address,
@@ -306,7 +306,7 @@ describe('Multisig', () => {
         });
         // Some time passed after init
         blockchain.now++;
-        let txIter = await blockchain.sendMessageIter(internal({
+        let txIter = new Txiterator(blockchain,internal({
                 from: deployer.address,
                 to: orderAddress,
                 value: toNano('1'),
