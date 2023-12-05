@@ -253,7 +253,7 @@ describe('FeeComputation', () => {
         curTime = () => blockchain.now ?? Math.floor(Date.now() / 1000);
     });
 
-    it('should send new order', async () => {
+    it('should send new order with contract estimated message value', async () => {
         const testAddr = randomAddress();
         const testMsg: TransferRequest = {type:"transfer", sendMode: 1, message: internal({to: testAddr, value: toNano('0.015'), body: beginCell().storeUint(12345, 32).endCell()})};
         const testMsg2: TransferRequest = {type:"transfer", sendMode: 1, message: internal({to: randomAddress(), value: toNano('0.017'), body: beginCell().storeUint(123425, 32).endCell()})};
@@ -261,7 +261,7 @@ describe('FeeComputation', () => {
         let timeSpan  = 365 * 24 * 3600;
         const expTime = Math.floor(Date.now() / 1000) + timeSpan;
         let orderEstimateOnContract = await multisigWallet.getOrderEstimate(orderList, BigInt(expTime));
-        const res = await multisigWallet.sendNewOrder(deployer.getSender(), orderList, expTime);
+        const res = await multisigWallet.sendNewOrder(deployer.getSender(), orderList, expTime, orderEstimateOnContract);
 
         /*
           tx0 : external -> treasury
@@ -301,6 +301,12 @@ describe('FeeComputation', () => {
             from: order.address,
             to: multisigWallet.address,
             success: true,
+        });
+        // Make sure we reached order execution
+        expect(secondApproval.transactions).toHaveTransaction({
+            from: multisigWallet.address,
+            on: testAddr,
+            value: toNano('0.015')
         });
 
 
