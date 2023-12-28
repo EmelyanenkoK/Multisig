@@ -5,6 +5,8 @@
 #include "messages.func";
 #include "order_helpers.func";
 
+const int EXPERIMENTAL_FEATURES = 0;
+
 (cell -> cell) prepare_guard_execution(cont c) asm "NOP";
 
 int validate_dictionary_sequence(cell dict) impure {
@@ -20,14 +22,15 @@ int validate_dictionary_sequence(cell dict) impure {
     return expected_index;
 }
 
-((int, cell, int, cell), ()) ~execute_order ((int, cell, int, cell) storage,
+((int, cell, int, cell, cell, cell), ()) ~execute_order ((int, cell, int, cell, cell, cell) storage,
 cell order_body) impure {
 
     accept_message();
 
     (int threshold,
         cell signers, int signers_num,
-        cell proposers) = storage;
+        cell proposers,
+        cell modules, cell guard) = storage;
 
     int action_index = -1;
     do {
@@ -46,32 +49,39 @@ cell order_body) impure {
                 signers_num = validate_dictionary_sequence(signers);
                 proposers = action~load_dict();
                 validate_dictionary_sequence(proposers);
+                modules = action~load_dict();
+                guard = action~load_maybe_ref();
             }
         }
     } until (~ found?);
     return ((threshold, signers, signers_num,
-        proposers), ());
+        proposers, modules, guard), ());
 }
 
 
-(int, int, cell, int, cell) load_data() {
+(int, int, cell, int, cell, cell, cell) load_data() {
     slice ds = get_data().begin_parse();
     (int next_order_seqno, int threshold,
         cell signers, int signers_num,
-        cell proposers) = (ds~load_order_seqno(), ds~load_index(),
+        cell proposers,
+        cell modules, cell guard) = (ds~load_order_seqno(), ds~load_index(),
         ds~load_nonempty_dict(), ds~load_index(),
-        ds~load_dict());
+        ds~load_dict(),
+        ds~load_dict(), ds~load_maybe_ref());
     return (next_order_seqno, threshold,
         signers, signers_num,
-        proposers);
+        proposers,
+        modules, guard);
 }
 
 () save_data (int next_order_seqno, int threshold,
 cell signers, int signers_num,
-cell proposers) impure {
+cell proposers,
+cell modules, cell guard) impure {
     begin_cell().store_order_seqno(next_order_seqno).store_index(threshold)
     .store_nonempty_dict(signers).store_index(signers_num)
     .store_dict(proposers)
+    .store_dict(modules).store_maybe_ref(guard)
     .end_cell()
     .set_data();
 }
@@ -85,7 +95,8 @@ cell proposers) impure {
 
     (int next_order_seqno, int threshold,
         cell signers, int signers_num,
-        cell proposers) = load_data();
+        cell proposers,
+        cell modules, cell guard) = load_data();
 
     if(op == op::new_order) {
         int signer? = in_msg_body~load_bool();
@@ -136,31 +147,50 @@ cell proposers) impure {
         throw_unless(error::singers_outdated, (signers_hash == signers.cell_hash()) & (approvals_collected >= threshold));
         throw_unless(error::expired, expiration_date >= now());
 
-        (threshold, signers, signers_num, proposers)~execute_order(order_body);
+        (threshold, signers, signers_num,
+            proposers, modules, guard)~execute_order(order_body);
     } elseif (op == op::execute_internal) {
         ;; we always trust ourselves, this feature is used to make chains of executions
         ;; where last action of previous execution triggers new one.
 
         throw_unless(error::unauthorized_execute, equal_slice_bits(sender, my_address()));
         cell order_body = in_msg_body~load_ref();
-        (threshold, signers, signers_num, proposers)~execute_order(order_body);
+        (threshold, signers, signers_num,
+            proposers, modules, guard)~execute_order(order_body);
+    }
+
+    if (EXPERIMENTAL_FEATURES & (op == op::execute_from_module) & (~ null?(modules))) {
+        (_, _, _, int found?) = modules.pfxdict_get?(sender.slice_bits(), sender);
+        throw_unless(error::unauthorized_execute, found?);
+        cell order_body = in_msg_body~load_ref();
+        (threshold, signers, signers_num,
+            proposers, modules, guard)~execute_order(order_body);
+    }
+
+    if (EXPERIMENTAL_FEATURES & (~ null?(guard)) ) {
+        slice guard_slice = guard.begin_parse();
+        (cell guard_code, cell guard_data) = (guard_slice~load_ref(), guard_slice~load_ref());
+
+        ;; guard may check incoming message, c4, c5 and optionally update it's own storage/code
+        guard = prepare_guard_execution(guard_code.begin_parse().bless()) (in_msg_full);
     }
 
     save_data(next_order_seqno, threshold,
         signers, signers_num,
-        proposers);
+        proposers,
+        modules, guard);
 }
 
 (int, int, cell, cell, cell, cell) get_multisig_data() method_id  {
     (int next_order_seqno, int threshold,
         cell signers, int signers_num,
-        cell proposers) = load_data();
+        cell proposers,
+        cell modules, cell guard) = load_data();
     throw_unless(error::inconsistent_data, signers_num == validate_dictionary_sequence(signers));
     validate_dictionary_sequence(proposers);
     return (next_order_seqno, threshold,
         signers, proposers,
-        ;; for modules and guard
-        null(), null());
+        modules, guard);
 }
 
 (int) get_order_estimate(cell order, int expiration_date) method_id {
